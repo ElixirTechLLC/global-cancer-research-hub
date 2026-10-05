@@ -157,8 +157,10 @@
   const trialsHref = (q) => '#/trials?' + new URLSearchParams(Object.entries(q).filter(([, v]) => v)).toString();
   const reviewNotice = '<p class="source-note">Draft text. The summaries on this page have not yet been reviewed by a medical board or matched to citations.</p>';
 
+  // Cancer picker: one bold, ruled-off group per cancer, with its types and indented subtypes beneath.
   function typeOptions(selected) {
-    return `<option value="Cancer"${selected === 'Cancer' ? ' selected' : ''}>Any cancer</option>` + flatten(CANCERS).map((t) => `<option value="${e(t.term)}"${t.term === selected ? ' selected' : ''}>${'  '.repeat(t.depth)}${e(t.name)}</option>`).join('');
+    const opt = (value, label) => `<option value="${e(value)}"${value === selected ? ' selected' : ''}>${label}</option>`;
+    return opt('Cancer', 'Any cancer') + ROOTS.map((root) => `<hr><optgroup label="${e(root.name)}">${opt(root.term, `All ${e(root.name.toLowerCase())}`)}${flatten(root.children || []).map((t) => opt(t.term, '\u00a0\u00a0'.repeat(t.depth) + e(t.name))).join('')}</optgroup>`).join('');
   }
   const ALL_COUNTRIES = [...new Set([...COUNTRIES.map((c) => c.name), 'Austria', 'Bangladesh', 'Belgium', 'Bulgaria', 'Chile', 'Colombia', 'Croatia', 'Cuba', 'Czechia', 'Denmark', 'Ethiopia', 'Finland', 'Ghana', 'Greece', 'Hong Kong', 'Hungary', 'Indonesia', 'Ireland', 'Jordan', 'Kenya', 'Kuwait', 'Lebanon', 'Malaysia', 'Morocco', 'New Zealand', 'Norway', 'Pakistan', 'Peru', 'Philippines', 'Poland', 'Portugal', 'Qatar', 'Romania', 'Serbia', 'Singapore', 'Sri Lanka', 'Sweden', 'Switzerland', 'Taiwan', 'Tanzania', 'Tunisia', 'Uganda', 'Ukraine', 'United Arab Emirates', 'Vietnam'])].sort((a, b) => a.localeCompare(b));
 
