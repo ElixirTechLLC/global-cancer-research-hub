@@ -68,7 +68,11 @@
     const p = new URLSearchParams();
     if (q.cond) p.set('query.cond', q.cond);
     if (q.term) p.set('query.term', q.term);
-    if (q.country) p.set('query.locn', `AREA[LocationCountry]"${q.country.replace(/"/g, '')}"`);
+    if (q.country) {
+      const name = `AREA[LocationCountry]"${q.country.replace(/"/g, '')}"`;
+      // For "recruiting now", require a recruiting site in that country, not just a recruiting trial with a closed site there.
+      p.set('query.locn', q.status === 'all-open' ? name : `SEARCH[Location](${name} AND AREA[LocationStatus]RECRUITING)`);
+    }
     p.set('filter.overallStatus', q.status === 'all-open' ? 'RECRUITING,NOT_YET_RECRUITING,ENROLLING_BY_INVITATION' : 'RECRUITING');
     const adv = [];
     const age = parseFloat(q.age);
@@ -140,20 +144,56 @@
 
   // ---------- shared fragments ----------
   const crumbs = (items) => `<div class="crumbs">${items.map(([t, h]) => (h ? `<a href="${h}">${e(t)}</a>` : e(t))).join(' &nbsp;/&nbsp; ')}</div>`;
-  const pageHead = (title, sub, trail) => `<div class="page-head"><div class="wrap">${trail ? crumbs(trail) : ''}<h1>${e(title)}</h1>${sub ? `<p>${e(sub)}</p>` : ''}</div></div>`;
+  const SITE = 'Global Cancer Research Hub';
+  const pageHead = (title, sub, trail) => { document.title = `${title} | ${SITE}`; return headHtml(title, sub, trail); };
+  const headHtml = (title, sub, trail) => `<div class="page-head"><div class="wrap">${trail ? crumbs(trail) : ''}<h1>${e(title)}</h1>${sub ? `<p>${e(sub)}</p>` : ''}</div></div>`;
   const trialsHref = (q) => '#/trials?' + new URLSearchParams(Object.entries(q).filter(([, v]) => v)).toString();
   const reviewNotice = '<p class="source-note">Draft text. The summaries on this page have not yet been reviewed by a medical board or matched to citations.</p>';
 
   function typeOptions(selected) {
     return flatten(CANCERS).map((t) => `<option value="${e(t.term)}"${t.term === selected ? ' selected' : ''}>${'  '.repeat(t.depth)}${e(t.name)}</option>`).join('');
   }
-  const countryDatalist = () => `<datalist id="country-list">${COUNTRIES.map((c) => `<option value="${e(c.name)}">`).join('')}</datalist>`;
+  const ALL_COUNTRIES = [...new Set([...COUNTRIES.map((c) => c.name), 'Austria', 'Bangladesh', 'Belgium', 'Bulgaria', 'Chile', 'Colombia', 'Croatia', 'Cuba', 'Czechia', 'Denmark', 'Ethiopia', 'Finland', 'Ghana', 'Greece', 'Hong Kong', 'Hungary', 'Indonesia', 'Ireland', 'Jordan', 'Kenya', 'Kuwait', 'Lebanon', 'Malaysia', 'Morocco', 'New Zealand', 'Norway', 'Pakistan', 'Peru', 'Philippines', 'Poland', 'Portugal', 'Qatar', 'Romania', 'Serbia', 'Singapore', 'Sri Lanka', 'Sweden', 'Switzerland', 'Taiwan', 'Tanzania', 'Tunisia', 'Uganda', 'Ukraine', 'United Arab Emirates', 'Vietnam'])].sort((a, b) => a.localeCompare(b));
+
+  // Country picker: opens the full scrollable list on every focus/click; typing narrows it.
+  function bindCountryPicker() {
+    const input = document.getElementById('f-country'), menu = document.getElementById('country-menu');
+    if (!input || !menu) return;
+    let active = -1, filtering = false;
+    const close = () => { menu.hidden = true; filtering = false; active = -1; input.setAttribute('aria-expanded', 'false'); };
+    const pick = (li) => { input.value = li.dataset.v; close(); };
+    const draw = () => {
+      const q = filtering ? input.value.trim().toLowerCase() : '';
+      const names = ALL_COUNTRIES.filter((n) => !q || n.toLowerCase().includes(q));
+      menu.innerHTML = (q ? '' : '<li role="option" data-v="">Any country</li>') + (names.map((n) => `<li role="option" data-v="${e(n)}"${n === input.value ? ' class="sel" aria-selected="true"' : ''}>${e(n)}</li>`).join('') || '<li class="none">No matching country</li>');
+      menu.hidden = false; active = -1;
+      input.setAttribute('aria-expanded', 'true');
+      const sel = menu.querySelector('.sel');
+      if (sel && !filtering) menu.scrollTop = sel.offsetTop - 80;
+    };
+    input.addEventListener('focus', draw);
+    input.addEventListener('click', draw);
+    input.addEventListener('input', () => { filtering = true; draw(); });
+    input.addEventListener('blur', close);
+    menu.addEventListener('mousedown', (ev) => { ev.preventDefault(); const li = ev.target.closest('li[data-v]'); if (li) pick(li); });
+    input.addEventListener('keydown', (ev) => {
+      const items = [...menu.querySelectorAll('li[data-v]')];
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        if (menu.hidden) return draw();
+        active = Math.max(0, Math.min(items.length - 1, active + (ev.key === 'ArrowDown' ? 1 : -1)));
+        items.forEach((li, i) => li.classList.toggle('act', i === active));
+        items[active]?.scrollIntoView({ block: 'nearest' });
+      } else if (ev.key === 'Enter' && !menu.hidden && active >= 0) { ev.preventDefault(); pick(items[active]); }
+      else if (ev.key === 'Escape') close();
+    });
+  }
 
   function finderForm(q, compact) {
     const ph = (q.phases || '').split(',');
     return `<form class="filters" id="finder">
       <label class="field wide">Cancer type<select name="cond">${typeOptions(q.cond || 'Leukemia')}</select></label>
-      <label class="field${compact ? '' : ' wide'}">Country<input name="country" list="country-list" placeholder="Any country" value="${e(q.country || '')}">${countryDatalist()}</label>
+      <div class="field combo${compact ? '' : ' wide'}"><label for="f-country">Country</label><input id="f-country" name="country" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="country-menu" aria-autocomplete="list" placeholder="Any country" value="${e(q.country || '')}"><ul id="country-menu" class="combo-menu" role="listbox" hidden></ul></div>
       <label class="field">Patient age<input name="age" type="number" min="0" max="120" placeholder="Years" value="${e(q.age || '')}"></label>
       ${compact ? '' : `
       <label class="field">Sex<select name="sex"><option value="">Any</option><option value="FEMALE"${q.sex === 'FEMALE' ? ' selected' : ''}>Female</option><option value="MALE"${q.sex === 'MALE' ? ' selected' : ''}>Male</option></select></label>
@@ -166,6 +206,7 @@
   function bindFinder() {
     const form = document.getElementById('finder');
     if (!form) return;
+    bindCountryPicker();
     form.addEventListener('submit', (ev) => {
       ev.preventDefault();
       const fd = new FormData(form);
@@ -198,12 +239,13 @@
 
   // ---------- pages ----------
   function home() {
+    document.title = SITE;
     const leuk = CANCERS[0];
     main.innerHTML = `
       <section class="hero"><div class="wrap hero-inner">
         <div>
           <h1>Leukemia research and open clinical trials, country by country</h1>
-          <p>See what hospitals and research groups in 25 countries are studying, which trials are recruiting, and how to contact the teams running them.</p>
+          <p>See what hospitals and research groups in ${COUNTRIES.length} countries are studying, which trials are recruiting, and how to contact the teams running them.</p>
           <div class="hero-actions"><a class="btn btn-light" href="#/cancers/leukemia">Explore leukemia</a><a class="btn btn-orange" href="#/countries">Research by country</a></div>
         </div>
         <div class="hero-panel"><h2>Find an open clinical trial</h2>${finderForm(profile.get(), true)}</div>
@@ -221,7 +263,7 @@
         <div class="stats">
           ${WORLD ? `<div class="stat"><b>${e(WORLD.cases)}</b><span>new leukemia cases worldwide (${e(WORLD.year)})</span></div><div class="stat"><b>${e(WORLD.deaths)}</b><span>deaths worldwide (${e(WORLD.year)})</span></div>` : ''}
           <div class="stat"><b id="stat-trials" class="loading">…</b><span>leukemia trials recruiting now</span></div>
-          <div class="stat"><b>${REGISTRIES.length || '—'}</b><span>trial registries tracked across ${COUNTRIES.length} countries</span></div>
+          <div class="stat"><b>${REGISTRIES.length || '—'}</b><span>national and regional trial registries linked</span></div>
         </div>
         ${WORLD ? `<p class="source-note" style="margin-top:12px">Incidence and mortality: ${ext(WORLD.sourceUrl, WORLD.source)}. Trial count: live from ClinicalTrials.gov.</p>` : ''}
         <div class="grid c4" style="margin-top:26px">${leuk.children.filter((c) => !c.group).map((c) => `<a class="card" href="#/cancers/leukemia/${c.slug}"><span class="tag green">${e(c.abbr)}</span><h3 style="margin-top:8px">${e(c.name)}</h3><p>${e(c.tagline)}</p></a>`).join('')}</div>
@@ -250,18 +292,24 @@
     const trail = [['Home', '#/'], ['Cancer types', '#/cancers'], ...path.map((n, i) => [n.name, i < path.length - 1 ? nodeHref(path.slice(0, i + 1)) : null])];
     const kids = node.children || [];
     const short = node.abbr || node.name;
+    // Statements may be plain strings or {text, cites:[{label,url}]}; cited ones get numbered reference links.
+    const refs = [];
+    const ref = (c) => { let i = refs.findIndex((r) => r.url === c.url); if (i < 0) i = refs.push(c) - 1; return `<sup><a href="#ref-${i + 1}" aria-label="Reference ${i + 1}">[${i + 1}]</a></sup>`; };
+    const T = (x) => (typeof x === 'string' ? e(x) : e(x.text) + (x.cites || []).map(ref).join(''));
+    let treatHtml = '';
     main.innerHTML = pageHead(node.abbr ? `${node.name} (${node.abbr})` : node.name, node.tagline, trail) + `
       <section class="band"><div class="wrap two-col">
         <div>
-          ${(node.overview || []).map((p) => `<p>${e(p)}</p>`).join('')}
-          ${node.facts?.length ? `<h3 style="margin-top:1.4em">Key facts</h3><ul class="facts">${node.facts.map((f) => `<li>${e(f)}</li>`).join('')}</ul>` : ''}
-          ${node.global ? `<div class="notice info" style="margin-top:22px"><strong>Around the world.</strong> ${e(node.global)}</div>` : ''}
-          ${reviewNotice}
+          ${(node.overview || []).map((p) => `<p>${T(p)}</p>`).join('')}
+          ${node.facts?.length ? `<h3 style="margin-top:1.4em">Key facts</h3><ul class="facts">${node.facts.map((f) => `<li>${T(f)}</li>`).join('')}</ul>` : ''}
+          ${node.global ? `<div class="notice info" style="margin-top:22px"><strong>Around the world.</strong> ${T(node.global)}</div>` : ''}
+          ${treatHtml = node.treatments?.length ? `<div class="card"><h3>Treatment approaches</h3><div class="tags">${node.treatments.map((t) => `<span class="tag navy">${e(t)}</span>`).join('')}</div>${(node.treatmentCites || []).length ? `<p class="source-note" style="margin-top:8px">Sources ${node.treatmentCites.map(ref).join(' ')}</p>` : ''}</div>` : '', ''}
+          ${refs.length ? `<h3 style="margin-top:1.6em">References</h3><ol class="refs">${refs.map((r, i) => `<li id="ref-${i + 1}">${ext(r.url, r.label)}</li>`).join('')}</ol><p class="source-note">Each statement above links to the source that supports it. The text has not yet been reviewed by a medical board.</p>` : reviewNotice}
         </div>
         <aside class="stack">
           ${node.group ? '' : `<div class="card"><h3>Open ${e(short)} trials</h3><p><span class="count loading" id="node-count">…</span><br><span class="source-note">recruiting worldwide right now</span></p><a class="btn btn-orange" href="${trialsHref({ cond: node.term })}">Find a trial</a></div>`}
-          ${node.treatments?.length ? `<div class="card"><h3>Treatment approaches</h3><div class="tags">${node.treatments.map((t) => `<span class="tag navy">${e(t)}</span>`).join('')}</div></div>` : ''}
-          ${node.sources?.length ? `<div class="card"><h3>Reference sources</h3>${node.sources.map(([t, u]) => `<p style="margin:.3em 0">${ext(u, t)}</p>`).join('')}</div>` : ''}
+          ${treatHtml}
+          ${node.sources?.length ? `<div class="card"><h3>Further reading</h3>${node.sources.map(([t, u]) => `<p style="margin:.3em 0">${ext(u, t)}</p>`).join('')}</div>` : ''}
         </aside>
       </div></section>
 
@@ -279,7 +327,7 @@
 
       <section class="band alt"><div class="wrap">
         <div class="band-title"><h2>Latest ${e(short)} research, country by country</h2></div>
-        <div class="chips" id="region-chips">${['All regions', ...REGIONS].map((r, i) => `<a class="chip${i === 0 ? ' active' : ''}" href="#" data-region="${i === 0 ? '' : e(r)}">${e(r)}</a>`).join('')}</div>
+        <div class="chips" id="region-chips">${['All regions', ...REGIONS].map((r, i) => `<button type="button" class="chip${i === 0 ? ' active' : ''}" aria-pressed="${i === 0}" data-region="${i === 0 ? '' : e(r)}">${e(r)}</button>`).join('')}</div>
         <div class="grid c3" id="pub-grid" style="margin-top:20px"></div>
         <p class="source-note" style="margin-top:10px">Most recent peer-reviewed papers with "${e(node.term)}" in the title and at least one author affiliated with an institution in that country.</p>
         <h3 style="margin-top:28px">Search regional research indexes</h3>
@@ -291,9 +339,9 @@
     const token = renderToken;
     countTrials({ cond: node.term }).then((n) => { const el = document.getElementById('node-count'); if (el && token === renderToken) { el.textContent = fmt(n); el.classList.remove('loading'); } }).catch(() => {});
     pool(COUNTRIES, 4, async (c) => {
-      const n = await countTrials({ cond: node.term, country: c.name });
+      const n = await countTrials({ cond: node.term, country: c.name }).catch(() => null);
       const cell = token === renderToken && main.querySelector(`[data-count="${CSS.escape(c.name)}"]`);
-      if (cell) cell.textContent = fmt(n);
+      if (cell) cell.textContent = n == null ? '—' : fmt(n);
     });
     paperCounts(node.term).then((counts) => {
       if (token !== renderToken) return;
@@ -314,7 +362,7 @@
       const a = ev.target.closest('[data-region]');
       if (!a) return;
       ev.preventDefault();
-      document.querySelectorAll('#region-chips .chip').forEach((x) => x.classList.toggle('active', x === a));
+      document.querySelectorAll('#region-chips .chip').forEach((x) => { x.classList.toggle('active', x === a); x.setAttribute('aria-pressed', x === a); });
       drawPubs(a.dataset.region);
     });
     drawPubs('');
@@ -331,7 +379,7 @@
     main.innerHTML = pageHead('Find a clinical trial', 'Search open cancer trials worldwide, then check the age, sex and location requirements against your own situation.', [['Home', '#/'], ['Find a clinical trial']]) + `
       <section class="band"><div class="wrap">
         <div class="card">${finderForm(q)}</div>
-        <div class="results-bar"><h2 id="result-count" style="margin:0" class="loading">Searching…</h2><span class="source-note">Sorted by most recently updated</span></div>
+        <div class="results-bar"><h2 id="result-count" style="margin:0" class="loading" aria-live="polite">Searching…</h2><span class="source-note">Sorted by most recently updated</span></div>
         <div class="stack" id="results"></div>
         <p style="text-align:center;margin-top:22px"><button class="btn btn-outline" id="more" hidden>Load more trials</button></p>
         <div class="results-bar"><h2 style="margin:0">Also recruiting: ISRCTN registry</h2><span class="source-note">UK-based international registry · live</span></div>
@@ -370,6 +418,13 @@
     load();
     isrctnTrials(q.cond || 'Leukemia', q.country).then((list) => {
       if (token !== renderToken) return;
+      const age = parseFloat(q.age);
+      list = list.filter((t) => {
+        const lo = parseAge(t.minAge), hi = parseAge(t.maxAge);
+        const ageOk = isNaN(age) || ((lo == null || age >= lo) && (hi == null || age <= hi));
+        const sexOk = !q.sex || !t.sex || /^(all|both)$/i.test(t.sex) || t.sex.toUpperCase() === q.sex;
+        return ageOk && sexOk;
+      });
       document.getElementById('isrctn').innerHTML = list.length ? list.map((t) => `<article class="card trial">
         <div class="tags"><span class="tag green">Recruiting</span>${t.phase && t.phase !== 'Not Applicable' ? `<span class="tag navy">${e(t.phase)}</span>` : ''}<span class="tag">${e(t.id)}</span></div>
         <h3>${ext(`https://www.isrctn.com/${t.id}`, t.title)}</h3>
@@ -506,7 +561,7 @@
       <section class="band"><div class="wrap two-col">
         <div>
           <h2>Leading research groups and centers</h2>
-          <div class="stack">${(c.groups || []).map((g) => `<div class="card"><h3>${g.url ? ext(g.url, g.name) : e(g.name)}</h3>${g.city ? `<span class="tag">${e(g.city)}</span>` : ''}<p style="margin-top:8px">${e(g.note || '')}</p></div>`).join('') || '<p>No groups listed yet.</p>'}</div>
+          <div class="stack">${(c.groups || []).map((g) => `<div class="card"><h3>${g.url ? ext(g.url, g.name) : e(g.name)}</h3>${g.city ? `<span class="tag">${e(g.city)}</span>` : ''}<p style="margin-top:8px">${e(g.note || '')}</p>${(g.src || []).length ? `<p class="source-note">Source: ${g.src.map(([t, u]) => ext(u, t)).join(' · ')}</p>` : ''}</div>`).join('') || '<p>No groups listed yet.</p>'}</div>
           <h2 style="margin-top:34px">Open trials in ${e(c.name)}</h2>
           <div class="table-scroll"><table class="data"><thead><tr><th>Leukemia type</th><th class="num">Recruiting trials</th><th></th></tr></thead><tbody>
           ${types.map((t) => `<tr><td>${e(t.name)}</td><td class="num" data-type="${e(t.term)}"><span class="loading">…</span></td><td><a href="${trialsHref({ cond: t.term, country: c.name })}">View trials</a></td></tr>`).join('')}
@@ -522,7 +577,7 @@
             <tr><td>Deaths / year</td><td class="num">${fmt(c.stats.deaths)}</td></tr>
             ${c.stats.asrInc != null ? `<tr><td>Incidence rate*</td><td class="num">${e(c.stats.asrInc)}</td></tr>` : ''}
             ${c.stats.asrMort != null ? `<tr><td>Mortality rate*</td><td class="num">${e(c.stats.asrMort)}</td></tr>` : ''}
-          </tbody></table><p class="source-note" style="margin-top:8px">*Age-standardized, per 100,000 people. ${WORLD ? ext(WORLD.sourceUrl, WORLD.source) : ''}</p></div>` : ''}
+          </tbody></table><p class="source-note" style="margin-top:8px">*Age-standardized, per 100,000 people. ${c.statsNote ? e(c.statsNote) + ' ' : ''}${WORLD ? ext(WORLD.sourceUrl, WORLD.source) : ''}</p></div>` : ''}
           <div class="card"><h3>National resources</h3>
             <p><b class="source-note">Trial registry</b><br>${link(c.registry)}</p>
             <p><b class="source-note">Medicines regulator</b><br>${link(c.regulator)}</p>
@@ -533,9 +588,9 @@
       </div></section>`;
     const token = renderToken;
     pool(types, 3, async (t) => {
-      const n = await countTrials({ cond: t.term, country: c.name });
+      const n = await countTrials({ cond: t.term, country: c.name }).catch(() => null);
       const cell = token === renderToken && main.querySelector(`[data-type="${CSS.escape(t.term)}"]`);
-      if (cell) cell.textContent = fmt(n);
+      if (cell) cell.textContent = n == null ? '—' : fmt(n);
     });
     publications('leukemia', c, 8).then((r) => { if (token === renderToken) document.getElementById('country-pubs').innerHTML = pubList(r); })
       .catch(() => { if (token === renderToken) document.getElementById('country-pubs').innerHTML = '<p class="error">Could not load publications.</p>'; });
@@ -569,6 +624,11 @@
           <div class="card"><h3>Questions to ask the study team</h3><ul class="facts">
             <li>What is the purpose of this study?</li><li>What treatments or tests are involved, and how often?</li><li>How could this compare with my standard treatment options?</li><li>What are the known risks and side effects?</li><li>Who pays for study treatment, tests, travel and lodging?</li><li>How long will I be in the study, and what follow-up is needed?</li><li>Can I continue the treatment after the study ends if it helps me?</li>
           </ul></div>
+          <div class="card"><h3>Official guidance</h3>
+            <p style="margin:.3em 0">${ext('https://www.cancer.gov/research/participate/clinical-trials-search/steps', 'NCI: Steps to find a clinical trial')}</p>
+            <p style="margin:.3em 0">${ext('https://www.fda.gov/patients/drug-development-process/step-3-clinical-research', 'FDA: Clinical research phases')}</p>
+            <p style="margin:.3em 0">${ext('https://www.cancer.gov/research/participate/clinical-trials/paying', 'NCI: Paying for clinical trials')}</p>
+          </div>
           <div class="notice">This site does not enroll patients and cannot determine eligibility. Only the study team can do that.</div>
           <a class="btn btn-orange" href="#/trials">Search open trials</a>
         </aside>
@@ -610,6 +670,7 @@
     const [top, ...rest] = parts;
     document.querySelectorAll('.nav a[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === (top === 'trial' ? 'trials' : top)));
     document.getElementById('nav').classList.remove('open');
+    document.querySelector('.nav-toggle').setAttribute('aria-expanded', 'false');
     if (!top) home();
     else if (top === 'cancers') (rest.length ? nodePage(rest) : cancerList());
     else if (top === 'trials') trialsPage(q);

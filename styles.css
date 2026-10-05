@@ -211,4 +211,21 @@ table.data tr:last-child td { border-bottom: 0; }
   section.band { padding: 32px 0; }
 }
 @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+
+/* Country picker */
+.combo { position: relative; }
+.combo input { padding-right: 30px; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23566273' stroke-width='1.6'/%3E%3C/svg%3E") no-repeat right 10px center; }
+.combo-menu { position: absolute; top: 100%; left: 0; right: 0; z-index: 30; max-height: 240px; overflow-y: auto; margin: 2px 0 0; padding: 4px 0; list-style: none; background: #fff; border: 1px solid #a9b4c2; box-shadow: 0 6px 16px rgba(16, 49, 95, .16); font-weight: 400; font-size: .95rem; }
+.combo-menu li { padding: 7px 10px; cursor: pointer; }
+.combo-menu li:hover, .combo-menu li.act { background: #e8edf5; }
+.combo-menu li.sel { font-weight: 700; color: var(--navy); }
+.combo-menu li.none { color: var(--muted); cursor: default; }
+
+/* References */
+sup a { text-decoration: none; font-size: .78em; padding: 0 1px; }
+.refs { font-size: .88rem; padding-left: 1.4em; margin: 0 0 1em; }
+.refs li { padding: 3px 0; }
+[id] { scroll-margin-top: 90px; }
+button.chip { font: inherit; font-size: .9rem; color: var(--navy); cursor: pointer; }
+@media (max-width: 1100px) { .utility-inner span { display: inline; } .utility-inner a { display: none; } }
 [hidden] { display: none !important; }
