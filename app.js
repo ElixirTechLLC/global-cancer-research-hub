@@ -3,6 +3,12 @@
   const COUNTRIES = window.COUNTRIES || [];
   const REGISTRIES = window.REGISTRIES || [];
   const WORLD = window.WORLD_STATS || null;
+  const STATS = window.CANCER_STATS || {};
+  const CONFIG = window.SITE_CONFIG || {};
+  const ROOTS = CANCERS.filter((c) => !c.soon);
+  const FOCUS = ROOTS.find((c) => c.slug === CONFIG.homeFocus) || null;
+  const DEFAULT_COND = FOCUS ? FOCUS.term : 'Cancer';
+  const statsSource = WORLD ? `<a href="${WORLD.sourceUrl}" target="_blank" rel="noopener noreferrer">${WORLD.source}</a>` : '';
   const LIT = window.LITERATURE_SOURCES || [];
   const REGIONS = ['Americas', 'Europe', 'Asia-Pacific', 'Middle East & Africa'];
   const main = document.getElementById('main');
@@ -120,14 +126,15 @@
 
   // ISRCTN registry (UK-based, international). Official XML API; full-text search, so we re-check the condition client-side.
   async function isrctnTrials(term, countryName) {
-    const uk = term.replace(/leukemia/gi, 'leukaemia');
+    const uk = term.replace(/leukemia/gi, 'leukaemia').replace(/tumor/gi, 'tumour');
     const q = `("${term}" OR "${uk}") AND recruitmentStatus:recruiting`;
     const url = `https://www.isrctn.com/api/query/format/default?q=${encodeURIComponent(q)}&limit=30`;
     if (!cache.has(url)) cache.set(url, fetch(url).then((r) => { if (!r.ok) throw new Error(r.status); return r.text(); }).catch((err) => { cache.delete(url); throw err; }));
     const doc = new DOMParser().parseFromString(await cache.get(url), 'application/xml');
     const one = (el, name) => el?.getElementsByTagNameNS('*', name)[0];
     const txt = (el, name) => (one(el, name)?.textContent || '').trim();
-    const words = term.toLowerCase().replace(/leukemia/g, 'leuk').split(/\s+/);
+    const norm = (x) => x.toLowerCase().replace(/leukaemia|leukemia/g, 'leuk').replace(/tumour/g, 'tumor').replace(/[^a-z0-9 ]+/g, ' ');
+    const words = norm(term).split(/\s+/).filter(Boolean);
     return [...doc.getElementsByTagNameNS('*', 'fullTrial')].map((ft) => {
       const countries = [...new Set([...(one(ft, 'recruitmentCountries')?.getElementsByTagNameNS('*', 'country') || [])].map((x) => x.textContent.trim()))];
       return {
@@ -135,12 +142,12 @@
         minAge: txt(ft, 'lowerAgeLimit'), maxAge: txt(ft, 'upperAgeLimit'), sex: txt(ft, 'gender'), phase: txt(ft, 'phase'), countries
       };
     }).filter((t) => {
-      const hay = (t.title + ' ' + t.condition).toLowerCase().replace(/leukaemia|leukemia/g, 'leuk');
+      const hay = norm(t.title + ' ' + t.condition);
       return words.every((w) => hay.includes(w)) && (!countryName || t.countries.some((c) => c.toLowerCase() === countryName.toLowerCase()));
     });
   }
 
-  const registryLink = (r, term) => (r.search ? r.search.replace('{q}', encodeURIComponent(term || 'leukemia')) : r.url);
+  const registryLink = (r, term) => (r.search ? r.search.replace('{q}', encodeURIComponent(term || 'cancer')) : r.url);
 
   // ---------- shared fragments ----------
   const crumbs = (items) => `<div class="crumbs">${items.map(([t, h]) => (h ? `<a href="${h}">${e(t)}</a>` : e(t))).join(' &nbsp;/&nbsp; ')}</div>`;
@@ -151,7 +158,7 @@
   const reviewNotice = '<p class="source-note">Draft text. The summaries on this page have not yet been reviewed by a medical board or matched to citations.</p>';
 
   function typeOptions(selected) {
-    return flatten(CANCERS).map((t) => `<option value="${e(t.term)}"${t.term === selected ? ' selected' : ''}>${'  '.repeat(t.depth)}${e(t.name)}</option>`).join('');
+    return `<option value="Cancer"${selected === 'Cancer' ? ' selected' : ''}>Any cancer</option>` + flatten(CANCERS).map((t) => `<option value="${e(t.term)}"${t.term === selected ? ' selected' : ''}>${'  '.repeat(t.depth)}${e(t.name)}</option>`).join('');
   }
   const ALL_COUNTRIES = [...new Set([...COUNTRIES.map((c) => c.name), 'Austria', 'Bangladesh', 'Belgium', 'Bulgaria', 'Chile', 'Colombia', 'Croatia', 'Cuba', 'Czechia', 'Denmark', 'Ethiopia', 'Finland', 'Ghana', 'Greece', 'Hong Kong', 'Hungary', 'Indonesia', 'Ireland', 'Jordan', 'Kenya', 'Kuwait', 'Lebanon', 'Malaysia', 'Morocco', 'New Zealand', 'Norway', 'Pakistan', 'Peru', 'Philippines', 'Poland', 'Portugal', 'Qatar', 'Romania', 'Serbia', 'Singapore', 'Sri Lanka', 'Sweden', 'Switzerland', 'Taiwan', 'Tanzania', 'Tunisia', 'Uganda', 'Ukraine', 'United Arab Emirates', 'Vietnam'])].sort((a, b) => a.localeCompare(b));
 
@@ -192,7 +199,7 @@
   function finderForm(q, compact) {
     const ph = (q.phases || '').split(',');
     return `<form class="filters" id="finder">
-      <label class="field wide">Cancer type<select name="cond">${typeOptions(q.cond || 'Leukemia')}</select></label>
+      <label class="field wide">Cancer type<select name="cond">${typeOptions(q.cond || DEFAULT_COND)}</select></label>
       <div class="field combo${compact ? '' : ' wide'}"><label for="f-country">Country</label><input id="f-country" name="country" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="country-menu" aria-autocomplete="list" placeholder="Any country" value="${e(q.country || '')}"><ul id="country-menu" class="combo-menu" role="listbox" hidden></ul></div>
       <label class="field">Patient age<input name="age" type="number" min="0" max="120" placeholder="Years" value="${e(q.age || '')}"></label>
       ${compact ? '' : `
@@ -238,51 +245,61 @@
   }
 
   // ---------- pages ----------
+  const world = (slug) => STATS[slug]?.WORLD;
+  const cancerCard = (c) => `<a class="card" href="#/cancers/${c.slug}"><h3>${e(c.name)}</h3>${world(c.slug) ? `<p>${fmt(world(c.slug).cases)} new cases worldwide in ${e(WORLD.year)}</p>` : ''}<span class="more">${c.children.length} types</span></a>`;
+
   function home() {
     document.title = SITE;
-    const leuk = CANCERS[0];
+    const subject = FOCUS ? FOCUS.name : 'Cancer';
+    const fw = FOCUS && world(FOCUS.slug);
     main.innerHTML = `
       <section class="hero"><div class="wrap hero-inner">
         <div>
-          <h1>Leukemia research and open clinical trials, country by country</h1>
+          <h1>${e(subject)} research and open clinical trials, country by country</h1>
           <p>See what hospitals and research groups in ${COUNTRIES.length} countries are studying, which trials are recruiting, and how to contact the teams running them.</p>
-          <div class="hero-actions"><a class="btn btn-light" href="#/cancers/leukemia">Explore leukemia</a><a class="btn btn-orange" href="#/countries">Research by country</a></div>
+          <div class="hero-actions">${FOCUS ? `<a class="btn btn-light" href="#/cancers/${FOCUS.slug}">Explore ${e(FOCUS.name.toLowerCase())}</a>` : '<a class="btn btn-light" href="#/cancers">Explore cancer types</a>'}<a class="btn btn-orange" href="#/countries">Research by country</a></div>
         </div>
         <div class="hero-panel"><h2>Find an open clinical trial</h2>${finderForm(profile.get(), true)}</div>
       </div></section>
 
       <section class="band"><div class="wrap">
-        <div class="band-title"><h2>Explore by cancer</h2><span class="source-note">Leukemia is covered first. Other cancers will follow.</span></div>
-        <div class="grid c4">${CANCERS.map((c) => (c.soon
-          ? `<div class="card disabled"><h3>${e(c.name)}</h3><span class="tag">Coming soon</span></div>`
-          : `<a class="card" href="#/cancers/${c.slug}"><h3>${e(c.name)}</h3><p>${e(c.tagline)}</p><span class="more">${c.children.length} types</span></a>`)).join('')}</div>
+        <div class="band-title"><h2>Explore by cancer</h2><span class="source-note">Case numbers: IARC GLOBOCAN ${WORLD ? e(WORLD.year) : ''} estimates</span></div>
+        <div class="grid c4">${ROOTS.map(cancerCard).join('')}</div>
       </div></section>
 
-      <section class="band alt"><div class="wrap">
-        <div class="band-title"><h2>Leukemia worldwide</h2><a href="#/cancers/leukemia">All leukemia types</a></div>
+      ${FOCUS ? `<section class="band alt"><div class="wrap">
+        <div class="band-title"><h2>${e(FOCUS.name)} worldwide</h2><a href="#/cancers/${FOCUS.slug}">All ${e(FOCUS.name.toLowerCase())} types</a></div>
         <div class="stats">
-          ${WORLD ? `<div class="stat"><b>${e(WORLD.cases)}</b><span>new leukemia cases worldwide (${e(WORLD.year)})</span></div><div class="stat"><b>${e(WORLD.deaths)}</b><span>deaths worldwide (${e(WORLD.year)})</span></div>` : ''}
-          <div class="stat"><b id="stat-trials" class="loading">…</b><span>leukemia trials recruiting now</span></div>
+          ${fw ? `<div class="stat"><b>${fmt(fw.cases)}</b><span>new ${e(FOCUS.name.toLowerCase())} cases worldwide (${e(WORLD.year)})</span></div><div class="stat"><b>${fmt(fw.deaths)}</b><span>deaths worldwide (${e(WORLD.year)})</span></div>` : ''}
+          <div class="stat"><b data-trials="${e(FOCUS.term)}" class="loading">…</b><span>${e(FOCUS.name.toLowerCase())} trials recruiting now</span></div>
           <div class="stat"><b>${REGISTRIES.length || '—'}</b><span>national and regional trial registries linked</span></div>
         </div>
-        ${WORLD ? `<p class="source-note" style="margin-top:12px">Incidence and mortality: ${ext(WORLD.sourceUrl, WORLD.source)}. Trial count: live from ClinicalTrials.gov.</p>` : ''}
-        <div class="grid c4" style="margin-top:26px">${leuk.children.filter((c) => !c.group).map((c) => `<a class="card" href="#/cancers/leukemia/${c.slug}"><span class="tag green">${e(c.abbr)}</span><h3 style="margin-top:8px">${e(c.name)}</h3><p>${e(c.tagline)}</p></a>`).join('')}</div>
-      </div></section>
+        <p class="source-note" style="margin-top:12px">Incidence and mortality: ${statsSource}. Trial count: live from ClinicalTrials.gov.</p>
+        <div class="grid c4" style="margin-top:26px">${FOCUS.children.filter((c) => !c.group).map((c) => `<a class="card" href="#/cancers/${FOCUS.slug}/${c.slug}">${c.abbr ? `<span class="tag green">${e(c.abbr)}</span>` : ''}<h3 style="margin-top:8px">${e(c.name)}</h3>${c.tagline ? `<p>${e(c.tagline)}</p>` : ''}</a>`).join('')}</div>
+      </div></section>` : `<section class="band alt"><div class="wrap">
+        <div class="band-title"><h2>Cancer worldwide</h2><span class="source-note">${REGISTRIES.length} national and regional trial registries linked</span></div>
+        <div class="table-scroll"><table class="data"><thead><tr><th>Cancer</th><th class="num">New cases, ${e(WORLD?.year)}</th><th class="num">Deaths, ${e(WORLD?.year)}</th><th class="num">Trials recruiting now</th><th></th></tr></thead><tbody>
+        ${ROOTS.map((c) => `<tr><td><a href="#/cancers/${c.slug}">${e(c.name)}</a></td><td class="num">${fmt(world(c.slug)?.cases)}</td><td class="num">${fmt(world(c.slug)?.deaths)}</td><td class="num" data-trials="${e(c.term)}"><span class="loading">…</span></td><td><a href="${trialsHref({ cond: c.term })}">Find trials</a></td></tr>`).join('')}
+        </tbody></table></div>
+        <p class="source-note" style="margin-top:10px">New cases and deaths are worldwide estimates for both sexes and all ages: ${statsSource}. Lymphoma combines Hodgkin and non-Hodgkin lymphoma; colorectal follows IARC's "colorectum" group. Trial counts are live from ClinicalTrials.gov.</p>
+      </div></section>`}
 
       <section class="band"><div class="wrap">
         <div class="band-title"><h2>Browse by country</h2><a href="#/countries">All countries</a></div>
-        <p class="lead">See which hospitals and research groups lead leukemia research in each country, what they are publishing, and which trials are open there.</p>
+        <p class="lead">See how many people are affected in each country, which trials are open there, and what its researchers are publishing.</p>
         <div class="chips">${COUNTRIES.map((c) => `<a class="chip" href="#/countries/${c.code.toLowerCase()}">${e(c.name)}</a>`).join('')}</div>
       </div></section>`;
     bindFinder();
-    countTrials({ cond: 'Leukemia' }).then((n) => { const el = document.getElementById('stat-trials'); if (el) { el.textContent = fmt(n); el.className = ''; } }).catch(() => {});
+    const token = renderToken;
+    pool([...main.querySelectorAll('[data-trials]')], 4, async (el) => {
+      const n = await countTrials({ cond: el.dataset.trials }).catch(() => null);
+      if (token === renderToken) { el.textContent = n == null ? '—' : fmt(n); el.classList.remove('loading'); }
+    });
   }
 
   function cancerList() {
     main.innerHTML = pageHead('Cancer types', 'Choose a cancer, then drill down into its types and subtypes.', [['Home', '#/'], ['Cancer types']]) + `
-      <section class="band"><div class="wrap"><div class="grid c3">${CANCERS.map((c) => (c.soon
-        ? `<div class="card disabled"><h3>${e(c.name)}</h3><span class="tag">Coming soon</span></div>`
-        : `<a class="card" href="#/cancers/${c.slug}"><h3>${e(c.name)}</h3><p>${e(c.tagline)}</p><div class="tags">${c.children.map((k) => `<span class="tag">${e(k.abbr || k.name)}</span>`).join('')}</div></a>`)).join('')}</div></div></section>`;
+      <section class="band"><div class="wrap"><div class="grid c3">${ROOTS.map((c) => `<a class="card" href="#/cancers/${c.slug}"><h3>${e(c.name)}</h3>${world(c.slug) ? `<p>${fmt(world(c.slug).cases)} new cases worldwide in ${e(WORLD.year)}</p>` : ''}<div class="tags">${c.children.map((k) => `<span class="tag">${e(k.abbr || k.name)}</span>`).join('')}</div></a>`).join('')}</div></div></section>`;
   }
 
   function nodePage(slugs) {
@@ -292,19 +309,24 @@
     const trail = [['Home', '#/'], ['Cancer types', '#/cancers'], ...path.map((n, i) => [n.name, i < path.length - 1 ? nodeHref(path.slice(0, i + 1)) : null])];
     const kids = node.children || [];
     const short = node.abbr || node.name;
+    const root = path[0], isRoot = path.length === 1;
+    const st = isRoot ? STATS[root.slug] : null;
+    const sub = node.tagline || (st ? `About ${fmt(st.WORLD.cases)} new cases and ${fmt(st.WORLD.deaths)} deaths worldwide in ${WORLD.year}, by IARC estimates.` : `${root.name}: open trials and research worldwide.`);
     // Statements may be plain strings or {text, cites:[{label,url}]}; cited ones get numbered reference links.
     const refs = [];
     const ref = (c) => { let i = refs.findIndex((r) => r.url === c.url); if (i < 0) i = refs.push(c) - 1; return `<sup><a href="#ref-${i + 1}" aria-label="Reference ${i + 1}">[${i + 1}]</a></sup>`; };
     const T = (x) => (typeof x === 'string' ? e(x) : e(x.text) + (x.cites || []).map(ref).join(''));
     let treatHtml = '';
-    main.innerHTML = pageHead(node.abbr ? `${node.name} (${node.abbr})` : node.name, node.tagline, trail) + `
+    main.innerHTML = pageHead(node.abbr ? `${node.name} (${node.abbr})` : node.name, sub, trail) + `
       <section class="band"><div class="wrap two-col">
         <div>
+          ${st ? `<div class="stats" style="grid-template-columns:repeat(2,1fr);margin-bottom:10px"><div class="stat"><b>${fmt(st.WORLD.cases)}</b><span>new cases worldwide (${e(WORLD.year)})</span></div><div class="stat"><b>${fmt(st.WORLD.deaths)}</b><span>deaths worldwide (${e(WORLD.year)})</span></div></div><p class="source-note" style="margin-bottom:22px">${statsSource}</p>` : ''}
+          ${node.overview?.length || node.group ? '' : `<div class="notice info">A written summary of ${e(node.name.toLowerCase())} has not been published on this site yet. Everything on this page is live data: open trials, activity by country and recent research.</div>`}
           ${(node.overview || []).map((p) => `<p>${T(p)}</p>`).join('')}
           ${node.facts?.length ? `<h3 style="margin-top:1.4em">Key facts</h3><ul class="facts">${node.facts.map((f) => `<li>${T(f)}</li>`).join('')}</ul>` : ''}
           ${node.global ? `<div class="notice info" style="margin-top:22px"><strong>Around the world.</strong> ${T(node.global)}</div>` : ''}
           ${treatHtml = node.treatments?.length ? `<div class="card"><h3>Treatment approaches</h3><div class="tags">${node.treatments.map((t) => `<span class="tag navy">${e(t)}</span>`).join('')}</div>${(node.treatmentCites || []).length ? `<p class="source-note" style="margin-top:8px">Sources ${node.treatmentCites.map(ref).join(' ')}</p>` : ''}</div>` : '', ''}
-          ${refs.length ? `<h3 style="margin-top:1.6em">References</h3><ol class="refs">${refs.map((r, i) => `<li id="ref-${i + 1}">${ext(r.url, r.label)}</li>`).join('')}</ol><p class="source-note">Each statement above links to the source that supports it. The text has not yet been reviewed by a medical board.</p>` : reviewNotice}
+          ${refs.length ? `<h3 style="margin-top:1.6em">References</h3><ol class="refs">${refs.map((r, i) => `<li id="ref-${i + 1}">${ext(r.url, r.label)}</li>`).join('')}</ol><p class="source-note">Each statement above links to the source that supports it. The text has not yet been reviewed by a medical board.</p>` : (node.overview?.length ? reviewNotice : '')}
         </div>
         <aside class="stack">
           ${node.group ? '' : `<div class="card"><h3>Open ${e(short)} trials</h3><p><span class="count loading" id="node-count">…</span><br><span class="source-note">recruiting worldwide right now</span></p><a class="btn btn-orange" href="${trialsHref({ cond: node.term })}">Find a trial</a></div>`}
@@ -315,14 +337,14 @@
 
       ${kids.length ? `<section class="band alt"><div class="wrap">
         <div class="band-title"><h2>${path.length === 1 ? `Types of ${e(node.name.toLowerCase())}` : 'Subtypes'}</h2></div>
-        <div class="grid c3">${kids.map((k) => `<a class="card" href="${nodeHref([...path, k])}">${k.abbr ? `<span class="tag green">${e(k.abbr)}</span>` : ''}<h3 style="margin-top:8px">${e(k.name)}</h3><p>${e(k.tagline)}</p>${k.children?.length ? `<span class="more">${k.children.length} subtypes</span>` : '<span class="more">Details &amp; trials</span>'}</a>`).join('')}</div>
+        <div class="grid c3">${kids.map((k) => `<a class="card" href="${nodeHref([...path, k])}">${k.abbr ? `<span class="tag green">${e(k.abbr)}</span>` : ''}<h3 style="margin-top:8px">${e(k.name)}</h3>${k.tagline ? `<p>${e(k.tagline)}</p>` : ''}${k.children?.length ? `<span class="more">${k.children.length} subtypes</span>` : '<span class="more">Details &amp; trials</span>'}</a>`).join('')}</div>
       </div></section>` : ''}
 
       ${node.group ? '' : `<section class="band"><div class="wrap">
         <div class="band-title"><h2>Open ${e(short)} trials by country</h2><span class="source-note">Live counts · select a country to see its trials</span></div>
-        <div class="table-scroll"><table class="data"><thead><tr><th>Country</th><th>Region</th><th class="num">Recruiting trials</th><th class="num">Research papers</th><th>National registry</th><th></th></tr></thead>
-        <tbody>${COUNTRIES.map((c) => `<tr><td><a href="#/countries/${c.code.toLowerCase()}">${e(c.name)}</a></td><td>${e(c.region)}</td><td class="num" data-count="${e(c.name)}"><span class="loading">…</span></td><td class="num" data-papers="${e(c.code)}"><span class="loading">…</span></td><td>${c.registry ? ext(c.registry.url, c.registry.name) : '—'}</td><td><a href="${trialsHref({ cond: node.term, country: c.name })}">View trials</a></td></tr>`).join('')}</tbody></table></div>
-        <p class="source-note" style="margin-top:10px">Counts come from ClinicalTrials.gov, which lists studies in most countries but does not include every trial registered only in a national registry. Use the registry links to search those directly. Research papers: all-time count of scholarly works with "${e(node.term)}" in the title and an author institution in that country (OpenAlex).</p>
+        <div class="table-scroll"><table class="data"><thead><tr><th>Country</th><th>Region</th>${st ? '<th class="num">New cases / year</th><th class="num">Deaths / year</th>' : ''}<th class="num">Recruiting trials</th><th class="num">Research papers</th><th>National registry</th><th></th></tr></thead>
+        <tbody>${COUNTRIES.map((c) => `<tr><td><a href="#/countries/${c.code.toLowerCase()}">${e(c.name)}</a></td><td>${e(c.region)}</td>${st ? `<td class="num">${fmt(st[c.code]?.cases)}</td><td class="num">${fmt(st[c.code]?.deaths)}</td>` : ''}<td class="num" data-count="${e(c.name)}"><span class="loading">…</span></td><td class="num" data-papers="${e(c.code)}"><span class="loading">…</span></td><td>${c.registry ? ext(c.registry.url, c.registry.name) : '—'}</td><td><a href="${trialsHref({ cond: node.term, country: c.name })}">View trials</a></td></tr>`).join('')}</tbody></table></div>
+        <p class="source-note" style="margin-top:10px">Counts come from ClinicalTrials.gov, which lists studies in most countries but does not include every trial registered only in a national registry. Use the registry links to search those directly. Research papers: all-time count of scholarly works with "${e(node.term)}" in the title and an author institution in that country (OpenAlex).${st ? ` New cases and deaths: ${statsSource}.` : ''}</p>
       </div></section>
 
       <section class="band alt"><div class="wrap">
@@ -374,6 +396,7 @@
   }
 
   function trialsPage(q) {
+    if (!q.cond) q = { ...q, cond: DEFAULT_COND };
     // Filters arriving via a shared link also feed the pre-screen on trial pages.
     if (q.age || q.sex || q.country) profile.set({ ...profile.get(), ...(q.age ? { age: q.age } : {}), ...(q.sex ? { sex: q.sex } : {}), ...(q.country ? { country: q.country } : {}) });
     main.innerHTML = pageHead('Find a clinical trial', 'Search open cancer trials worldwide, then check the age, sex and location requirements against your own situation.', [['Home', '#/'], ['Find a clinical trial']]) + `
@@ -416,7 +439,7 @@
       more.disabled = false;
     };
     load();
-    isrctnTrials(q.cond || 'Leukemia', q.country).then((list) => {
+    isrctnTrials(q.cond || DEFAULT_COND, q.country).then((list) => {
       if (token !== renderToken) return;
       const age = parseFloat(q.age);
       list = list.filter((t) => {
@@ -434,7 +457,7 @@
     }).catch(() => { if (token === renderToken) document.getElementById('isrctn').innerHTML = '<p class="source-note">ISRCTN could not be reached right now.</p>'; });
   }
   const matchesCountry = (r, name) => (name && (r.countries || []).some((c) => c.toLowerCase() === name.toLowerCase()) ? 1 : 0);
-  const shortTerm = (t) => e((t || 'leukemia').toLowerCase());
+  const shortTerm = (t) => e((t || 'cancer').toLowerCase());
 
   function parseAge(s) {
     const m = /([\d.]+)\s*(year|month|week|day|hour|minute)/i.exec(s || '');
@@ -543,41 +566,44 @@
   }
 
   function countriesPage() {
-    main.innerHTML = pageHead('Research by country', 'Leading leukemia research groups, national trial registries and open trials, region by region.', [['Home', '#/'], ['Research by country']]) +
+    main.innerHTML = pageHead('Research by country', 'Cancer burden, open trials, research groups and national registries, region by region.', [['Home', '#/'], ['Research by country']]) +
       REGIONS.map((r, i) => {
         const list = COUNTRIES.filter((c) => c.region === r);
-        return list.length ? `<section class="band${i % 2 ? ' alt' : ''}"><div class="wrap"><div class="band-title"><h2>${e(r)}</h2></div><div class="grid c3">${list.map((c) => `<a class="card country-card" href="#/countries/${c.code.toLowerCase()}"><h3>${e(c.name)}</h3><p>${e((c.groups || []).slice(0, 3).map((g) => g.short || g.name).join(' · '))}</p>${c.stats ? `<p class="source-note">${fmt(c.stats.cases)} new leukemia cases / year</p>` : ''}<span class="more">Groups, registry &amp; trials</span></a>`).join('')}</div></div></section>` : '';
+        return list.length ? `<section class="band${i % 2 ? ' alt' : ''}"><div class="wrap"><div class="band-title"><h2>${e(r)}</h2></div><div class="grid c3">${list.map((c) => `<a class="card country-card" href="#/countries/${c.code.toLowerCase()}"><h3>${e(c.name)}</h3><p>${e((c.groups || []).slice(0, 3).map((g) => g.short || g.name).join(' · '))}</p><span class="more">Statistics, trials &amp; research groups</span></a>`).join('')}</div></div></section>` : '';
       }).join('');
   }
 
   function countryPage(code) {
     const c = country(code);
     if (!c) return notFound();
-    const leuk = CANCERS[0];
-    const types = [leuk, ...leuk.children.filter((k) => !k.group)];
+    const leuk = CANCERS.find((x) => x.slug === 'leukemia');
     const link = (o) => (o ? (o.url ? ext(o.url, o.name) : e(o.name)) : '—');
     const regs = REGISTRIES.filter((r) => r.id === 'ictrp' || (r.countries || []).includes(c.name));
-    main.innerHTML = pageHead(c.name, `Leukemia research, trials and resources in ${c.name}.`, [['Home', '#/'], ['Research by country', '#/countries'], [c.name]]) + `
+    const first = FOCUS || ROOTS[0];
+    main.innerHTML = pageHead(c.name, `Cancer research, trials and resources in ${c.name}.`, [['Home', '#/'], ['Research by country', '#/countries'], [c.name]]) + `
       <section class="band"><div class="wrap two-col">
         <div>
-          <h2>Leading research groups and centers</h2>
-          <div class="stack">${(c.groups || []).map((g) => `<div class="card"><h3>${g.url ? ext(g.url, g.name) : e(g.name)}</h3>${g.city ? `<span class="tag">${e(g.city)}</span>` : ''}<p style="margin-top:8px">${e(g.note || '')}</p>${(g.src || []).length ? `<p class="source-note">Source: ${g.src.map(([t, u]) => ext(u, t)).join(' · ')}</p>` : ''}</div>`).join('') || '<p>No groups listed yet.</p>'}</div>
-          <h2 style="margin-top:34px">Open trials in ${e(c.name)}</h2>
-          <div class="table-scroll"><table class="data"><thead><tr><th>Leukemia type</th><th class="num">Recruiting trials</th><th></th></tr></thead><tbody>
-          ${types.map((t) => `<tr><td>${e(t.name)}</td><td class="num" data-type="${e(t.term)}"><span class="loading">…</span></td><td><a href="${trialsHref({ cond: t.term, country: c.name })}">View trials</a></td></tr>`).join('')}
+          <h2>Cancer in ${e(c.name)}</h2>
+          <div class="table-scroll"><table class="data"><thead><tr><th>Cancer</th><th class="num">New cases / year</th><th class="num">Deaths / year</th><th class="num">Recruiting trials</th><th></th></tr></thead><tbody>
+          ${ROOTS.map((t) => `<tr><td><a href="#/cancers/${t.slug}">${e(t.name)}</a></td><td class="num">${fmt(STATS[t.slug]?.[c.code]?.cases)}</td><td class="num">${fmt(STATS[t.slug]?.[c.code]?.deaths)}</td><td class="num" data-type="${e(t.term)}"><span class="loading">…</span></td><td><a href="${trialsHref({ cond: t.term, country: c.name })}">View trials</a></td></tr>`).join('')}
           </tbody></table></div>
-          <p class="source-note" style="margin-top:8px">Live from ClinicalTrials.gov. ${c.registry ? `For trials registered only nationally, search ${ext(c.registry.url, c.registry.name)}.` : ''}</p>
-          ${regs.length ? `<h3 style="margin-top:22px">Registries covering ${e(c.name)}</h3><div class="chips">${regs.map((r) => `<a class="chip" href="${e(registryLink(r, 'leukemia'))}" target="_blank" rel="noopener noreferrer">${e(r.name)}</a>`).join('')}</div>` : ''}
-          <h2 style="margin-top:34px">Latest leukemia research from ${e(c.name)}</h2>
-          <div id="country-pubs"><p class="loading">Loading…</p></div>
+          <p class="source-note" style="margin-top:8px">New cases and deaths: ${statsSource}. ${c.statsNote ? e(c.statsNote) + ' ' : ''}Trial counts are live from ClinicalTrials.gov. ${c.registry ? `For trials registered only nationally, search ${ext(c.registry.url, c.registry.name)}.` : ''}</p>
+          ${regs.length ? `<h3 style="margin-top:22px">Registries covering ${e(c.name)}</h3><div class="chips">${regs.map((r) => `<a class="chip" href="${e(registryLink(r, 'cancer'))}" target="_blank" rel="noopener noreferrer">${e(r.name)}</a>`).join('')}</div>` : ''}
+
+          ${leuk ? `<h2 style="margin-top:34px">Leukemia trials by type</h2>
+          <div class="table-scroll"><table class="data"><thead><tr><th>Leukemia type</th><th class="num">Recruiting trials</th><th></th></tr></thead><tbody>
+          ${leuk.children.filter((k) => !k.group).map((t) => `<tr><td>${e(t.name)}</td><td class="num" data-type="${e(t.term)}"><span class="loading">…</span></td><td><a href="${trialsHref({ cond: t.term, country: c.name })}">View trials</a></td></tr>`).join('')}
+          </tbody></table></div>` : ''}
+
+          <h2 style="margin-top:34px">Leukemia research groups and centers</h2>
+          <p class="source-note">Research groups for the other cancers have not been added yet.</p>
+          <div class="stack">${(c.groups || []).map((g) => `<div class="card"><h3>${g.url ? ext(g.url, g.name) : e(g.name)}</h3>${g.city ? `<span class="tag">${e(g.city)}</span>` : ''}<p style="margin-top:8px">${e(g.note || '')}</p>${(g.src || []).length ? `<p class="source-note">Source: ${g.src.map(([t, u]) => ext(u, t)).join(' · ')}</p>` : ''}</div>`).join('') || '<p>No groups listed yet.</p>'}</div>
+
+          <h2 style="margin-top:34px">Latest research from ${e(c.name)}</h2>
+          <div class="chips" id="pub-cancer">${ROOTS.map((t) => `<button type="button" class="chip${t === first ? ' active' : ''}" aria-pressed="${t === first}" data-term="${e(t.term)}">${e(t.name)}</button>`).join('')}</div>
+          <div id="country-pubs" style="margin-top:14px"><p class="loading">Loading…</p></div>
         </div>
         <aside class="stack">
-          ${c.stats ? `<div class="card"><h3>Leukemia in numbers</h3><table class="data"><tbody>
-            <tr><td>New cases / year</td><td class="num">${fmt(c.stats.cases)}</td></tr>
-            <tr><td>Deaths / year</td><td class="num">${fmt(c.stats.deaths)}</td></tr>
-            ${c.stats.asrInc != null ? `<tr><td>Incidence rate*</td><td class="num">${e(c.stats.asrInc)}</td></tr>` : ''}
-            ${c.stats.asrMort != null ? `<tr><td>Mortality rate*</td><td class="num">${e(c.stats.asrMort)}</td></tr>` : ''}
-          </tbody></table><p class="source-note" style="margin-top:8px">*Age-standardized, per 100,000 people. ${c.statsNote ? e(c.statsNote) + ' ' : ''}${WORLD ? ext(WORLD.sourceUrl, WORLD.source) : ''}</p></div>` : ''}
           <div class="card"><h3>National resources</h3>
             <p><b class="source-note">Trial registry</b><br>${link(c.registry)}</p>
             <p><b class="source-note">Medicines regulator</b><br>${link(c.regulator)}</p>
@@ -587,13 +613,23 @@
         </aside>
       </div></section>`;
     const token = renderToken;
-    pool(types, 3, async (t) => {
-      const n = await countTrials({ cond: t.term, country: c.name }).catch(() => null);
-      const cell = token === renderToken && main.querySelector(`[data-type="${CSS.escape(t.term)}"]`);
-      if (cell) cell.textContent = n == null ? '—' : fmt(n);
+    pool([...main.querySelectorAll('[data-type]')], 3, async (cell) => {
+      const n = await countTrials({ cond: cell.dataset.type, country: c.name }).catch(() => null);
+      if (token === renderToken) cell.textContent = n == null ? '—' : fmt(n);
     });
-    publications('leukemia', c, 8).then((r) => { if (token === renderToken) document.getElementById('country-pubs').innerHTML = pubList(r); })
-      .catch(() => { if (token === renderToken) document.getElementById('country-pubs').innerHTML = '<p class="error">Could not load publications.</p>'; });
+    const box = document.getElementById('country-pubs');
+    const loadPubs = (term) => {
+      box.innerHTML = '<p class="loading">Loading…</p>';
+      publications(term, c, 8).then((r) => { if (token === renderToken) box.innerHTML = pubList(r); })
+        .catch(() => { if (token === renderToken) box.innerHTML = '<p class="error">Could not load publications.</p>'; });
+    };
+    document.getElementById('pub-cancer').addEventListener('click', (ev) => {
+      const b = ev.target.closest('[data-term]');
+      if (!b) return;
+      document.querySelectorAll('#pub-cancer .chip').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', x === b); });
+      loadPubs(b.dataset.term);
+    });
+    loadPubs(first.term);
   }
 
   function enrollPage() {
@@ -602,7 +638,7 @@
         <div>
           <h2>The steps</h2>
           <ol class="steps">
-            <li><strong>Know your diagnosis in detail.</strong> Trials are written for specific situations: the exact leukemia type, its genetic features, and whether it is newly diagnosed, in remission, or has come back. Ask your doctor for these details and copies of your key test reports.</li>
+            <li><strong>Know your diagnosis in detail.</strong> Trials are written for specific situations: the exact cancer type, its genetic features, and whether it is newly diagnosed, in remission, or has come back. Ask your doctor for these details and copies of your key test reports.</li>
             <li><strong>Search for open trials.</strong> Use the <a href="#/trials">trial finder</a> with your cancer type, country and age. Also check your national registry, because some trials are listed only there.</li>
             <li><strong>Read the eligibility criteria.</strong> Every trial lists inclusion criteria (what you must have) and exclusion criteria (what rules you out). Our pre-screen checks the basics; the medical criteria need your doctor.</li>
             <li><strong>Talk with your own doctor.</strong> Bring the trial's registry number. Your hematologist or oncologist can judge whether it is a reasonable option and can often refer you directly.</li>
@@ -639,7 +675,7 @@
     const lit = window.LITERATURE_SOURCES || [];
     main.innerHTML = pageHead('About the data', 'Where the information on this site comes from, how current it is, and what its limits are.', [['Home', '#/'], ['About the data']]) + `
       <section class="band"><div class="wrap">
-        <div class="notice"><strong>Proof of concept.</strong> This site demonstrates the idea with leukemia. Disease summaries and research-group descriptions are draft text that has not yet been reviewed by a medical board or matched line by line to citations. Coverage of national registries is still being expanded.</div>
+        <div class="notice"><strong>Proof of concept.</strong> Leukemia is the first cancer with written, cited summaries; the other cancers currently show live data only. Disease summaries and research-group descriptions are draft text that has not yet been reviewed by a medical board or matched line by line to citations. Coverage of national registries is still being expanded.</div>
         <h2>Clinical trial registries</h2>
         <p class="lead">Trials are registered in many different registries worldwide. We show live results where a registry offers open data access, and link directly to the registry's own search where it does not.</p>
         <div class="table-scroll"><table class="data"><thead><tr><th>Registry</th><th>Covers</th><th>How we use it</th></tr></thead><tbody>

@@ -1,6 +1,9 @@
 // Editorial content tree: cancer -> type -> subtype (any depth).
 // `term` is the condition keyword sent to trial registries and literature indexes.
 // POC content: must be reviewed by a qualified hematologist/oncologist before public launch.
+// Home page focus. null = all cancers on the home page; 'leukemia' = the original leukemia-focused home page.
+window.SITE_CONFIG = { homeFocus: null };
+
 window.CANCERS = [
   {
     slug: 'leukemia',
@@ -265,13 +268,70 @@ window.CANCERS = [
         ]
       }
     ]
-  },
-  // Placeholders: shown as "coming soon" on the cancer selector.
-  { slug: 'lymphoma', name: 'Lymphoma', soon: true },
-  { slug: 'myeloma', name: 'Multiple Myeloma', soon: true },
-  { slug: 'breast', name: 'Breast Cancer', soon: true },
-  { slug: 'lung', name: 'Lung Cancer', soon: true },
-  { slug: 'colorectal', name: 'Colorectal Cancer', soon: true },
-  { slug: 'prostate', name: 'Prostate Cancer', soon: true },
-  { slug: 'brain', name: 'Brain Tumors', soon: true }
+  }
 ];
+
+// Data-only cancers: live trials, country activity, research and statistics, with no written summary yet.
+// Add `overview`, `facts`, etc. (with citations) to a node to turn it into a full page like leukemia.
+(() => {
+  const slugify = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const N = (name, term, children, abbr) => ({ slug: slugify(abbr || name), name, abbr, term: term || name, children: children || [] });
+  const add = (slug, name, term, children) => window.CANCERS.push({ slug, name, term, dataOnly: true, children });
+
+  add('lymphoma', 'Lymphoma', 'Lymphoma', [
+    N('Hodgkin Lymphoma'),
+    N('Diffuse Large B-Cell Lymphoma', null, null, 'DLBCL'),
+    N('Follicular Lymphoma'),
+    N('Mantle Cell Lymphoma'),
+    N('Marginal Zone Lymphoma'),
+    N('Burkitt Lymphoma'),
+    N('Peripheral T-Cell Lymphoma'),
+    N('Cutaneous T-Cell Lymphoma'),
+    N('Waldenström Macroglobulinemia', 'Waldenstrom Macroglobulinemia')
+  ]);
+  add('myeloma', 'Multiple Myeloma', 'Multiple Myeloma', [
+    N('Newly Diagnosed Multiple Myeloma'),
+    N('Relapsed or Refractory Multiple Myeloma', 'Relapsed Refractory Multiple Myeloma'),
+    N('Smoldering Multiple Myeloma'),
+    N('AL Amyloidosis')
+  ]);
+  add('breast', 'Breast Cancer', 'Breast Cancer', [
+    N('Hormone Receptor–Positive Breast Cancer', 'Hormone Receptor Positive Breast Cancer'),
+    N('HER2-Positive Breast Cancer', 'HER2-positive Breast Cancer'),
+    N('Triple-Negative Breast Cancer', 'Triple Negative Breast Cancer'),
+    N('Metastatic Breast Cancer'),
+    N('Ductal Carcinoma In Situ', null, null, 'DCIS'),
+    N('Inflammatory Breast Cancer'),
+    N('Male Breast Cancer')
+  ]);
+  add('lung', 'Lung Cancer', 'Lung Cancer', [
+    N('Non-Small Cell Lung Cancer', null, [
+      N('EGFR-Mutated NSCLC', 'EGFR mutation Non-Small Cell Lung Cancer'),
+      N('ALK-Positive NSCLC', 'ALK-positive Non-Small Cell Lung Cancer'),
+      N('KRAS G12C–Mutated NSCLC', 'KRAS G12C Non-Small Cell Lung Cancer'),
+      N('Squamous Cell Lung Cancer', 'Squamous Cell Lung Carcinoma')
+    ], 'NSCLC'),
+    N('Small Cell Lung Cancer', null, null, 'SCLC')
+  ]);
+  add('colorectal', 'Colorectal Cancer', 'Colorectal Cancer', [
+    N('Colon Cancer'),
+    N('Rectal Cancer'),
+    N('Metastatic Colorectal Cancer'),
+    N('MSI-High Colorectal Cancer', 'Microsatellite Instability High Colorectal Cancer')
+  ]);
+  add('prostate', 'Prostate Cancer', 'Prostate Cancer', [
+    N('Localized Prostate Cancer'),
+    N('Metastatic Hormone-Sensitive Prostate Cancer'),
+    N('Castration-Resistant Prostate Cancer')
+  ]);
+  add('brain', 'Brain Tumors', 'Brain Tumor', [
+    N('Glioblastoma'),
+    N('Astrocytoma'),
+    N('Oligodendroglioma'),
+    N('Meningioma'),
+    N('Medulloblastoma'),
+    N('Ependymoma'),
+    N('Diffuse Intrinsic Pontine Glioma', null, null, 'DIPG'),
+    N('Brain Metastases')
+  ]);
+})();
