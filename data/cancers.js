@@ -335,3 +335,15 @@ window.CANCERS = [
     N('Brain Metastases')
   ]);
 })();
+
+// Biomarkers and genetic features offered as search filters, per cancer. These are search keywords, not a classification.
+window.BIOMARKERS = {
+  leukemia: ['FLT3', 'NPM1', 'IDH1', 'IDH2', 'TP53', 'KMT2A', 'Philadelphia chromosome', 'BCR-ABL1', 'T315I', 'CEBPA', 'RUNX1', 'MRD', 'CD19', 'CD22', 'CD33', 'CD123', 'CD7', 'BRAF', 'IGHV', 'del(17p)', 'menin'],
+  lymphoma: ['CD20', 'CD30', 'CD19', 'BCL2', 'MYC', 'EZH2', 'BTK', 'TP53', 'EBV', 'PD-L1'],
+  myeloma: ['BCMA', 'GPRC5D', 'FcRH5', 'CD38', 'del(17p)', 't(4;14)', 't(11;14)', 'high-risk cytogenetics', 'MRD'],
+  breast: ['HER2', 'hormone receptor', 'estrogen receptor', 'triple negative', 'BRCA', 'PIK3CA', 'ESR1', 'PD-L1', 'HER2-low', 'Ki-67'],
+  lung: ['EGFR', 'ALK', 'KRAS G12C', 'ROS1', 'MET', 'RET', 'BRAF', 'HER2', 'NTRK', 'PD-L1', 'STK11'],
+  colorectal: ['KRAS', 'BRAF V600E', 'MSI-H', 'dMMR', 'HER2', 'NRAS', 'NTRK', 'ctDNA'],
+  prostate: ['BRCA', 'HRR mutation', 'PSMA', 'AR-V7', 'PTEN', 'MSI-H', 'PSA'],
+  brain: ['IDH', 'MGMT', 'H3 K27M', 'BRAF', 'EGFR', '1p/19q', 'TERT', 'NTRK']
+};

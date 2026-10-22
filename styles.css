@@ -228,4 +228,7 @@ sup a { text-decoration: none; font-size: .78em; padding: 0 1px; }
 [id] { scroll-margin-top: 90px; }
 button.chip { font: inherit; font-size: .9rem; color: var(--navy); cursor: pointer; }
 @media (max-width: 1100px) { .utility-inner span { display: inline; } .utility-inner a { display: none; } }
+#bio-checks label { padding: 3px 8px; border: 1px solid var(--line); border-radius: 2px; background: #fff; }
+#bio-checks label:has(input:checked) { border-color: var(--navy); background: #e8edf5; }
+.pubs .tags { margin: 5px 0 0; }
 [hidden] { display: none !important; }

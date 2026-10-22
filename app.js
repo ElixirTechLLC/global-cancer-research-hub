@@ -8,7 +8,7 @@
   const ROOTS = CANCERS.filter((c) => !c.soon);
   const FOCUS = ROOTS.find((c) => c.slug === CONFIG.homeFocus) || null;
   const DEFAULT_COND = FOCUS ? FOCUS.term : 'Cancer';
-  const statsSource = WORLD ? `<a href="${WORLD.sourceUrl}" target="_blank" rel="noopener noreferrer">${WORLD.source}</a>` : '';
+  const statsSource = WORLD ? `<a href="${WORLD.sourceUrl}" target="_blank" rel="noopener noreferrer">${WORLD.source}</a>, retrieved 5 October 2026` : '';
   const LIT = window.LITERATURE_SOURCES || [];
   const REGIONS = ['Americas', 'Europe', 'Asia-Pacific', 'Middle East & Africa'];
   const main = document.getElementById('main');
@@ -73,7 +73,14 @@
   function trialQuery(q, extra = {}) {
     const p = new URLSearchParams();
     if (q.cond) p.set('query.cond', q.cond);
-    if (q.term) p.set('query.term', q.term);
+    const terms = [];
+    if (q.term) terms.push(`(${q.term.replace(/[()]/g, ' ')})`);
+    const setting = SETTINGS.find((x) => x[0] === q.setting && x[2]);
+    if (setting) terms.push(setting[2]);
+    const bio = (q.bio || '').split(',').map((x) => x.trim()).filter(Boolean);
+    if (bio.length) terms.push(`(${bio.map((b) => (/\s/.test(b) ? `"${b}"` : b)).join(' OR ')})`);
+    if (q.elig) terms.push(`AREA[EligibilityCriteria]"${q.elig.replace(/"/g, '').trim()}"`);
+    if (terms.length) p.set('query.term', terms.join(' AND '));
     if (q.country) {
       const name = `AREA[LocationCountry]"${q.country.replace(/"/g, '')}"`;
       // For "recruiting now", require a recruiting site in that country, not just a recruiting trial with a closed site there.
@@ -101,17 +108,41 @@
   // Literature: publications whose authors list an institution in the given country.
   const publications = async (term, c, size = 3) => {
     const aff = (c.aff || [c.name]).map((a) => `AFF:"${a}"`).join(' OR ');
-    const query = `TITLE:"${term}" AND (${aff}) AND SRC:MED`;
-    const url = `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(query)}&format=json&resultType=lite&pageSize=${size}&sort=${encodeURIComponent('P_PDATE_D desc')}`;
+    const query = `TITLE:"${term}" AND (${aff}) AND SRC:(MED OR PPR)`;
+    const url = `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(query)}&format=json&resultType=core&pageSize=${size}&sort=${encodeURIComponent('P_PDATE_D desc')}`;
     const d = await getJSON(url);
     return {
-      total: d.hitCount || 0,
+      total: d.hitCount || 0, retrieved: stamp(),
       items: (d.resultList?.result || []).map((r) => ({
-        title: r.title, authors: r.authorString, journal: r.journalTitle, date: r.firstPublicationDate || r.pubYear,
-        url: r.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${r.pmid}/` : `https://europepmc.org/article/${r.source}/${r.id}`
+        title: r.title, authors: r.authorString, journal: r.journalInfo?.journal?.title || r.journalTitle, date: r.firstPublicationDate || r.pubYear,
+        url: r.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${r.pmid}/` : `https://europepmc.org/article/${r.source}/${r.id}`,
+        ...classifyPub(r)
       }))
     };
   };
+
+  // Evidence stage and source type, derived from the index's article types and subject headings (automatic, so imperfect).
+  function classifyPub(r) {
+    const types = (r.pubTypeList?.pubType || []).map((x) => x.toLowerCase());
+    const mesh = (r.meshHeadingList?.meshHeading || []).map((m) => m.descriptorName.toLowerCase());
+    const has = (re) => types.some((t) => re.test(t));
+    const source = r.source === 'PPR' ? 'Preprint, not peer reviewed' : 'Journal article';
+    let stage;
+    const phase = types.find((t) => /clinical trial, phase/.test(t));
+    if (phase) stage = `Phase ${{ i: 1, ii: 2, iii: 3, iv: 4 }[/phase (iv|iii|ii|i)/.exec(phase)?.[1]] || ''} trial`.replace('  ', ' ');
+    else if (has(/clinical trial|randomized controlled/)) stage = 'Clinical trial';
+    else if (has(/systematic review|meta-analysis/)) stage = 'Systematic review';
+    else if (has(/guideline|consensus/)) stage = 'Guideline';
+    else if (has(/review/)) stage = 'Review';
+    else if (has(/case report/)) stage = 'Case report';
+    else if (has(/observational/)) stage = 'Observational study';
+    else {
+      const lab = mesh.some((m) => /^animals$|^mice$|^rats$|cell line|in vitro|xenograft|zebrafish/.test(m));
+      const human = mesh.includes('humans');
+      stage = lab && !human ? 'Lab study' : lab ? 'Lab and patient data' : human ? 'Patient data' : 'Not classified';
+    }
+    return { stage, source };
+  }
 
   // OpenAlex: number of papers per country (one request per cancer type; keyless quota is small, so cache per session).
   async function paperCounts(term) {
@@ -138,7 +169,7 @@
     return [...doc.getElementsByTagNameNS('*', 'fullTrial')].map((ft) => {
       const countries = [...new Set([...(one(ft, 'recruitmentCountries')?.getElementsByTagNameNS('*', 'country') || [])].map((x) => x.textContent.trim()))];
       return {
-        id: 'ISRCTN' + txt(ft, 'isrctn'), title: txt(one(ft, 'trialDescription'), 'title'), condition: (one(ft, 'conditions')?.textContent || '').replace(/\s+/g, ' ').trim(),
+        id: 'ISRCTN' + txt(ft, 'isrctn'), updated: (one(ft, 'trial')?.getAttribute('lastUpdated') || '').slice(0, 10), title: txt(one(ft, 'trialDescription'), 'title'), condition: (one(ft, 'conditions')?.textContent || '').replace(/\s+/g, ' ').trim(),
         minAge: txt(ft, 'lowerAgeLimit'), maxAge: txt(ft, 'upperAgeLimit'), sex: txt(ft, 'gender'), phase: txt(ft, 'phase'), countries
       };
     }).filter((t) => {
@@ -152,6 +183,20 @@
   // ---------- shared fragments ----------
   const crumbs = (items) => `<div class="crumbs">${items.map(([t, h]) => (h ? `<a href="${h}">${e(t)}</a>` : e(t))).join(' &nbsp;/&nbsp; ')}</div>`;
   const SITE = 'Global Cancer Research Hub';
+  // When the site's static content was last checked against its sources.
+  const VERIFIED = { citations: '2026-10-04', countryLinks: '2026-10-04', stats: '2026-10-05', registries: '2026-10-04' };
+  const longDate = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const stamp = () => new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const retrieved = (src) => `Retrieved live from ${src} on ${stamp()}.`;
+  const SETTINGS = [
+    ['', 'Any'],
+    ['newly', 'Newly diagnosed / untreated', '("newly diagnosed" OR "previously untreated" OR untreated OR "first-line")'],
+    ['relapsed', 'Relapsed or refractory', '(relapsed OR refractory)'],
+    ['maintenance', 'Maintenance', '(maintenance)'],
+    ['mrd', 'MRD-positive / residual disease', '("measurable residual disease" OR "minimal residual disease" OR MRD)']
+  ];
+  const BIOMARKERS = window.BIOMARKERS || {};
+  const rootOfTerm = (term) => ROOTS.find((r) => r.term === term || flatten(r.children || []).some((t) => t.term === term));
   const pageHead = (title, sub, trail) => { document.title = `${title} | ${SITE}`; return headHtml(title, sub, trail); };
   const headHtml = (title, sub, trail) => `<div class="page-head"><div class="wrap">${trail ? crumbs(trail) : ''}<h1>${e(title)}</h1>${sub ? `<p>${e(sub)}</p>` : ''}</div></div>`;
   const trialsHref = (q) => '#/trials?' + new URLSearchParams(Object.entries(q).filter(([, v]) => v)).toString();
@@ -208,18 +253,32 @@
       <label class="field">Sex<select name="sex"><option value="">Any</option><option value="FEMALE"${q.sex === 'FEMALE' ? ' selected' : ''}>Female</option><option value="MALE"${q.sex === 'MALE' ? ' selected' : ''}>Male</option></select></label>
       <label class="field">Status<select name="status"><option value="">Recruiting now</option><option value="all-open"${q.status === 'all-open' ? ' selected' : ''}>Recruiting + opening soon</option></select></label>
       <label class="field wide">Keyword (drug, gene, sponsor…)<input name="term" placeholder="e.g. venetoclax, CAR-T, FLT3" value="${e(q.term || '')}"></label>
+      <label class="field">Disease setting<select name="setting">${SETTINGS.map(([v, l]) => `<option value="${v}"${q.setting === v ? ' selected' : ''}>${e(l)}</option>`).join('')}</select></label>
+      <label class="field">Eligibility text mentions<input name="elig" placeholder="e.g. venetoclax, transplant" value="${e(q.elig || '')}" title="Searches the trial's eligibility criteria for this word or phrase, whether it is required or excluded"></label>
+      <div class="field wide" id="bio-field">Biomarker or genetic feature (any of those ticked)<div class="checks" id="bio-checks">${bioChecks(q.cond || DEFAULT_COND, q.bio)}</div></div>
       <div class="field wide">Phase<div class="checks">${[['EARLY_PHASE1', 'Early 1'], ['PHASE1', '1'], ['PHASE2', '2'], ['PHASE3', '3'], ['PHASE4', '4']].map(([v, l]) => `<label><input type="checkbox" name="phase" value="${v}"${ph.includes(v) ? ' checked' : ''}> Phase ${l}</label>`).join('')}</div></div>`}
       <div><button class="btn btn-orange" type="submit">Search trials</button></div>
     </form>`;
+  }
+  function bioChecks(cond, selected) {
+    const root = rootOfTerm(cond);
+    const list = root ? BIOMARKERS[root.slug] || [] : [];
+    const on = (selected || '').split(',');
+    if (!list.length) return '<span class="source-note">Choose a cancer type to see its biomarkers.</span>';
+    return list.map((b) => `<label><input type="checkbox" name="bio" value="${e(b)}"${on.includes(b) ? ' checked' : ''}> ${e(b)}</label>`).join('');
   }
   function bindFinder() {
     const form = document.getElementById('finder');
     if (!form) return;
     bindCountryPicker();
+    form.querySelector('select[name=cond]').addEventListener('change', (ev) => {
+      const box = document.getElementById('bio-checks');
+      if (box) box.innerHTML = bioChecks(ev.target.value, [...form.querySelectorAll('input[name=bio]:checked')].map((x) => x.value).join(','));
+    });
     form.addEventListener('submit', (ev) => {
       ev.preventDefault();
       const fd = new FormData(form);
-      const q = { cond: fd.get('cond'), country: (fd.get('country') || '').trim(), age: fd.get('age'), sex: fd.get('sex'), status: fd.get('status'), term: (fd.get('term') || '').trim(), phases: fd.getAll('phase').join(',') };
+      const q = { cond: fd.get('cond'), country: (fd.get('country') || '').trim(), age: fd.get('age'), sex: fd.get('sex'), status: fd.get('status'), term: (fd.get('term') || '').trim(), phases: fd.getAll('phase').join(','), setting: fd.get('setting') || '', bio: fd.getAll('bio').join(','), elig: (fd.get('elig') || '').trim() };
       profile.set({ ...profile.get(), ...(q.age ? { age: q.age } : {}), ...(q.sex ? { sex: q.sex } : {}), ...(q.country ? { country: q.country } : {}) });
       location.hash = trialsHref(q);
     });
@@ -234,13 +293,14 @@
     const drugs = (p.armsInterventionsModule?.interventions || []).map((i) => i.name);
     const ages = [el.minimumAge, el.maximumAge].some(Boolean) ? `${el.minimumAge || 'No minimum'} – ${el.maximumAge || 'no maximum'}` : 'No age limit stated';
     return `<article class="card trial">
-      <div class="tags"><span class="tag green">${e(titleCase(p.statusModule?.overallStatus))}</span>${phases.map((x) => `<span class="tag navy">${e(x)}</span>`).join('')}<span class="tag">${e(id)}</span></div>
+      <div class="tags"><span class="tag green">${e(titleCase(p.statusModule?.overallStatus))}</span>${phases.map((x) => `<span class="tag navy">${e(x)}</span>`).join('')}<span class="tag navy">${e(titleCase(p.designModule?.studyType || ''))}</span><span class="tag">Registry record · ClinicalTrials.gov ${e(id)}</span></div>
       <h3><a href="#/trial/${e(id)}">${e(p.identificationModule?.briefTitle)}</a></h3>
       <div class="trial-meta">
         <div><b>Sponsor</b>${e(p.sponsorCollaboratorsModule?.leadSponsor?.name || '—')}</div>
         <div><b>Age / sex</b>${e(ages)} · ${e(titleCase(el.sex || 'All'))}</div>
         <div><b>Countries (${countries.length})</b>${e(countries.slice(0, 6).join(', ') || 'Not listed')}${countries.length > 6 ? ` +${countries.length - 6} more` : ''}</div>
         <div style="grid-column:1/-1"><b>Treatments studied</b>${e(drugs.slice(0, 6).join(', ') || '—')}${drugs.length > 6 ? '…' : ''}</div>
+        <div style="grid-column:1/-1"><b>Registry record last updated</b>${e(p.statusModule?.lastUpdatePostDateStruct?.date || 'not stated')} · verified against ClinicalTrials.gov ${e(stamp())}</div>
       </div>
       <p style="margin-top:12px"><a class="btn btn-outline btn-sm" href="#/trial/${e(id)}">Eligibility, sites &amp; how to enroll</a></p>
     </article>`;
@@ -328,7 +388,7 @@
           ${node.facts?.length ? `<h3 style="margin-top:1.4em">Key facts</h3><ul class="facts">${node.facts.map((f) => `<li>${T(f)}</li>`).join('')}</ul>` : ''}
           ${node.global ? `<div class="notice info" style="margin-top:22px"><strong>Around the world.</strong> ${T(node.global)}</div>` : ''}
           ${treatHtml = node.treatments?.length ? `<div class="card"><h3>Treatment approaches</h3><div class="tags">${node.treatments.map((t) => `<span class="tag navy">${e(t)}</span>`).join('')}</div>${(node.treatmentCites || []).length ? `<p class="source-note" style="margin-top:8px">Sources ${node.treatmentCites.map(ref).join(' ')}</p>` : ''}</div>` : '', ''}
-          ${refs.length ? `<h3 style="margin-top:1.6em">References</h3><ol class="refs">${refs.map((r, i) => `<li id="ref-${i + 1}">${ext(r.url, r.label)}</li>`).join('')}</ol><p class="source-note">Each statement above links to the source that supports it. The text has not yet been reviewed by a medical board.</p>` : (node.overview?.length ? reviewNotice : '')}
+          ${refs.length ? `<h3 style="margin-top:1.6em">References</h3><ol class="refs">${refs.map((r, i) => `<li id="ref-${i + 1}">${ext(r.url, r.label)}</li>`).join('')}</ol><p class="source-note">Each statement above links to the source that supports it; citations were last checked on ${longDate(VERIFIED.citations)}. The text has not yet been reviewed by a medical board.</p>` : (node.overview?.length ? reviewNotice : '')}
         </div>
         <aside class="stack">
           ${node.group ? '' : `<div class="card"><h3>Open ${e(short)} trials</h3><p><span class="count loading" id="node-count">…</span><br><span class="source-note">recruiting worldwide right now</span></p><a class="btn btn-orange" href="${trialsHref({ cond: node.term })}">Find a trial</a></div>`}
@@ -346,14 +406,14 @@
         <div class="band-title"><h2>Open ${e(short)} trials by country</h2><span class="source-note">Live counts · select a country to see its trials</span></div>
         <div class="table-scroll"><table class="data"><thead><tr><th>Country</th><th>Region</th>${st ? '<th class="num">New cases / year</th><th class="num">Deaths / year</th>' : ''}<th class="num">Recruiting trials</th><th class="num">Research papers</th><th>National registry</th><th></th></tr></thead>
         <tbody>${COUNTRIES.map((c) => `<tr><td><a href="#/countries/${c.code.toLowerCase()}">${e(c.name)}</a></td><td>${e(c.region)}</td>${st ? `<td class="num">${fmt(st[c.code]?.cases)}</td><td class="num">${fmt(st[c.code]?.deaths)}</td>` : ''}<td class="num" data-count="${e(c.name)}"><span class="loading">…</span></td><td class="num" data-papers="${e(c.code)}"><span class="loading">…</span></td><td>${c.registry ? ext(c.registry.url, c.registry.name) : '—'}</td><td><a href="${trialsHref({ cond: node.term, country: c.name })}">View trials</a></td></tr>`).join('')}</tbody></table></div>
-        <p class="source-note" style="margin-top:10px">Counts come from ClinicalTrials.gov, which lists studies in most countries but does not include every trial registered only in a national registry. Use the registry links to search those directly. Research papers: all-time count of scholarly works with "${e(node.term)}" in the title and an author institution in that country (OpenAlex).${st ? ` New cases and deaths: ${statsSource}.` : ''}</p>
+        <p class="source-note" style="margin-top:10px">Counts come from ClinicalTrials.gov, which lists studies in most countries but does not include every trial registered only in a national registry. Use the registry links to search those directly. Trial counts: ${retrieved('ClinicalTrials.gov')} Research papers: all-time count of scholarly works with "${e(node.term)}" in the title and an author institution in that country (OpenAlex).${st ? ` New cases and deaths: ${statsSource}.` : ''}</p>
       </div></section>
 
       <section class="band alt"><div class="wrap">
         <div class="band-title"><h2>Latest ${e(short)} research, country by country</h2></div>
         <div class="chips" id="region-chips">${['All regions', ...REGIONS].map((r, i) => `<button type="button" class="chip${i === 0 ? ' active' : ''}" aria-pressed="${i === 0}" data-region="${i === 0 ? '' : e(r)}">${e(r)}</button>`).join('')}</div>
         <div class="grid c3" id="pub-grid" style="margin-top:20px"></div>
-        <p class="source-note" style="margin-top:10px">Most recent peer-reviewed papers with "${e(node.term)}" in the title and at least one author affiliated with an institution in that country.</p>
+        <p class="source-note" style="margin-top:10px">Most recent peer-reviewed papers with "${e(node.term)}" in the title and at least one author affiliated with an institution in that country. Stage and source labels are assigned automatically from the index's article type and subject headings, and can be wrong; the linked record is authoritative.</p>
         <h3 style="margin-top:28px">Search regional research indexes</h3>
         <p class="source-note">Much research from China, Latin America, Africa, Japan and Russia is published in national-language journals that international indexes miss. These open each index's own search for ${e(short)}.</p>
         <div class="chips">${LIT.filter((l) => l.search).map((l) => `<a class="chip" href="${e(l.search.replace('{q}', encodeURIComponent(node.term)))}" target="_blank" rel="noopener noreferrer" title="${e(l.covers)}">${e(l.name)}</a>`).join('')}</div>
@@ -394,7 +454,7 @@
 
   function pubList(res) {
     if (!res.items.length) return '<p class="source-note">No recent indexed papers found.</p>';
-    return `<p class="source-note" style="margin:0">${fmt(res.total)} papers indexed</p><ul class="pubs">${res.items.map((p) => `<li>${ext(p.url, String(p.title || '').replace(/<[^>]+>/g, ''))}<small>${e(p.journal || '')}${p.date ? ' · ' + e(p.date) : ''}</small><small>${e((p.authors || '').slice(0, 90))}${(p.authors || '').length > 90 ? '…' : ''}</small></li>`).join('')}</ul>`;
+    return `<p class="source-note" style="margin:0">${fmt(res.total)} papers indexed · retrieved ${e(res.retrieved)}</p><ul class="pubs">${res.items.map((p) => `<li>${ext(p.url, String(p.title || '').replace(/<[^>]+>/g, ''))}<small>${e(p.journal || '')}${p.date ? ' · published ' + e(p.date) : ''}</small><small>${e((p.authors || '').slice(0, 90))}${(p.authors || '').length > 90 ? '…' : ''}</small><span class="tags" style="margin:5px 0 0"><span class="tag navy">${e(p.stage)}</span><span class="tag">${e(p.source)}</span></span></li>`).join('')}</ul>`;
   }
 
   function trialsPage(q) {
@@ -404,10 +464,11 @@
     main.innerHTML = pageHead('Find a clinical trial', 'Search open cancer trials worldwide, then check the age, sex and location requirements against your own situation.', [['Home', '#/'], ['Find a clinical trial']]) + `
       <section class="band"><div class="wrap">
         <div class="card">${finderForm(q)}</div>
-        <div class="results-bar"><h2 id="result-count" style="margin:0" class="loading" aria-live="polite">Searching…</h2><span class="source-note">Sorted by most recently updated</span></div>
+        ${q.setting || q.bio || q.elig ? '<div class="notice" style="margin-top:14px">Disease setting, biomarker and eligibility-text filters are keyword searches of the registry record. They can miss trials that use different wording and include trials where the term appears as an exclusion. Always read the full eligibility criteria.</div>' : ''}
+        <div class="results-bar"><h2 id="result-count" style="margin:0" class="loading" aria-live="polite">Searching…</h2><span class="source-note" id="ct-stamp">Sorted by most recently updated</span></div>
         <div class="stack" id="results"></div>
         <p style="text-align:center;margin-top:22px"><button class="btn btn-outline" id="more" hidden>Load more trials</button></p>
-        <div class="results-bar"><h2 style="margin:0">Also recruiting: ISRCTN registry</h2><span class="source-note">UK-based international registry · live</span></div>
+        <div class="results-bar"><h2 style="margin:0">Also recruiting: ISRCTN registry</h2><span class="source-note" id="isrctn-stamp">UK-based international registry · live</span></div>
         <div class="stack" id="isrctn"><p class="loading">Searching ISRCTN…</p></div>
       </div></section>
       <section class="band alt"><div class="wrap">
@@ -428,6 +489,7 @@
         if (!pageToken) {
           count.className = '';
           count.textContent = `${fmt(d.totalCount)} open trial${d.totalCount === 1 ? '' : 's'} found`;
+          document.getElementById('ct-stamp').textContent = `Sorted by most recently updated · ${retrieved('ClinicalTrials.gov')}`;
           if (!d.totalCount) results.innerHTML = '<div class="notice">No trials on ClinicalTrials.gov match these filters. Try removing the country or age filter, or search the national registries listed below.</div>';
         }
         results.insertAdjacentHTML('beforeend', (d.studies || []).map(trialCard).join(''));
@@ -450,8 +512,9 @@
         const sexOk = !q.sex || !t.sex || /^(all|both)$/i.test(t.sex) || t.sex.toUpperCase() === q.sex;
         return ageOk && sexOk;
       });
+      document.getElementById('isrctn-stamp').textContent = retrieved('ISRCTN');
       document.getElementById('isrctn').innerHTML = list.length ? list.map((t) => `<article class="card trial">
-        <div class="tags"><span class="tag green">Recruiting</span>${t.phase && t.phase !== 'Not Applicable' ? `<span class="tag navy">${e(t.phase)}</span>` : ''}<span class="tag">${e(t.id)}</span></div>
+        <div class="tags"><span class="tag green">Recruiting</span>${t.phase && t.phase !== 'Not Applicable' ? `<span class="tag navy">${e(t.phase)}</span>` : ''}<span class="tag">Registry record · ISRCTN ${e(t.id.replace('ISRCTN', ''))}</span>${t.updated ? `<span class="tag">Record updated ${e(t.updated)}</span>` : ''}</div>
         <h3>${ext(`https://www.isrctn.com/${t.id}`, t.title)}</h3>
         <div class="trial-meta"><div><b>Condition</b>${e(t.condition.slice(0, 120))}</div><div><b>Age / sex</b>${e(t.minAge || 'No minimum')} – ${e(t.maxAge || 'no maximum')} · ${e(t.sex || 'All')}</div><div><b>Countries</b>${e(t.countries.slice(0, 6).join(', ') || 'Not listed')}</div></div>
         <p style="margin-top:12px">${ext(`https://www.isrctn.com/${t.id}`, 'Full record, eligibility & contacts on ISRCTN')}</p>
@@ -562,7 +625,7 @@
             <p style="margin-top:14px"><a class="btn btn-orange btn-sm" href="#sites">See study sites</a></p>
             <p><a href="#/enroll">More about joining a trial</a></p>
           </div>
-          <div class="card"><h3>Official record</h3><p>${ext(`https://clinicaltrials.gov/study/${id}`, `${id} on ClinicalTrials.gov`)}</p>${(p.identificationModule?.secondaryIdInfos || p.identificationModule?.secondaryIdInfo || []).length ? `<p class="source-note">Other IDs: ${(p.identificationModule.secondaryIdInfos || p.identificationModule.secondaryIdInfo).map((x) => e(x.id)).join(', ')}</p>` : ''}<p class="source-note">Information shown here is retrieved live from the registry and is maintained by the study sponsor.</p></div>
+          <div class="card"><h3>Official record</h3><p>${ext(`https://clinicaltrials.gov/study/${id}`, `${id} on ClinicalTrials.gov`)}</p>${(p.identificationModule?.secondaryIdInfos || p.identificationModule?.secondaryIdInfo || []).length ? `<p class="source-note">Other IDs: ${(p.identificationModule.secondaryIdInfos || p.identificationModule.secondaryIdInfo).map((x) => e(x.id)).join(', ')}</p>` : ''}<p class="source-note">Information shown here is maintained by the study sponsor. ${retrieved('ClinicalTrials.gov')}</p></div>
         </aside>
       </div></section>`;
   }
@@ -589,7 +652,7 @@
           <div class="table-scroll"><table class="data"><thead><tr><th>Cancer</th><th class="num">New cases / year</th><th class="num">Deaths / year</th><th class="num">Recruiting trials</th><th></th></tr></thead><tbody>
           ${ROOTS.map((t) => `<tr><td><a href="#/cancers/${t.slug}">${e(t.name)}</a></td><td class="num">${fmt(STATS[t.slug]?.[c.code]?.cases)}</td><td class="num">${fmt(STATS[t.slug]?.[c.code]?.deaths)}</td><td class="num" data-type="${e(t.term)}"><span class="loading">…</span></td><td><a href="${trialsHref({ cond: t.term, country: c.name })}">View trials</a></td></tr>`).join('')}
           </tbody></table></div>
-          <p class="source-note" style="margin-top:8px">New cases and deaths: ${statsSource}. ${c.statsNote ? e(c.statsNote) + ' ' : ''}Trial counts are live from ClinicalTrials.gov. ${c.registry ? `For trials registered only nationally, search ${ext(c.registry.url, c.registry.name)}.` : ''}</p>
+          <p class="source-note" style="margin-top:8px">New cases and deaths: ${statsSource}. ${c.statsNote ? e(c.statsNote) + ' ' : ''}Trial counts: ${retrieved('ClinicalTrials.gov')} ${c.registry ? `For trials registered only nationally, search ${ext(c.registry.url, c.registry.name)}.` : ''}</p>
           ${regs.length ? `<h3 style="margin-top:22px">Registries covering ${e(c.name)}</h3><div class="chips">${regs.map((r) => `<a class="chip" href="${e(registryLink(r, 'cancer'))}" target="_blank" rel="noopener noreferrer">${e(r.name)}</a>`).join('')}</div>` : ''}
 
           ${leuk ? `<h2 style="margin-top:34px">Leukemia trials by type</h2>
@@ -598,7 +661,7 @@
           </tbody></table></div>` : ''}
 
           <h2 style="margin-top:34px">Leukemia research groups and centers</h2>
-          <p class="source-note">Research groups for the other cancers have not been added yet.</p>
+          <p class="source-note">Research groups for the other cancers have not been added yet. Group descriptions and their source links were last checked on ${longDate(VERIFIED.countryLinks)}.</p>
           <div class="stack">${(c.groups || []).map((g) => `<div class="card"><h3>${g.url ? ext(g.url, g.name) : e(g.name)}</h3>${g.city ? `<span class="tag">${e(g.city)}</span>` : ''}<p style="margin-top:8px">${e(g.note || '')}</p>${(g.src || []).length ? `<p class="source-note">Source: ${g.src.map(([t, u]) => ext(u, t)).join(' · ')}</p>` : ''}</div>`).join('') || '<p>No groups listed yet.</p>'}</div>
 
           <h2 style="margin-top:34px">Latest research from ${e(c.name)}</h2>
@@ -684,6 +747,17 @@
         ${REGISTRIES.map((r) => `<tr><td>${ext(r.url, r.name)}</td><td>${e(r.covers)}</td><td>${e(r.access || 'Direct link to registry search')}</td></tr>`).join('')}
         </tbody></table></div>
         ${lit.length ? `<h2 style="margin-top:34px">Research literature and statistics</h2><div class="table-scroll"><table class="data"><thead><tr><th>Source</th><th>Covers</th><th>How we use it</th></tr></thead><tbody>${lit.map((r) => `<tr><td>${ext(r.url, r.name)}</td><td>${e(r.covers)}</td><td>${e(r.access)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+        <h2 style="margin-top:34px">How current is each part of the site</h2>
+        <div class="table-scroll"><table class="data"><thead><tr><th>Content</th><th>Updated</th><th>Last verified</th></tr></thead><tbody>
+          <tr><td>Trial listings, counts and trial pages</td><td>Live, each time a page loads</td><td>Shown on each item as "retrieved live" with the time; the registry's own "record last updated" date is shown as well</td></tr>
+          <tr><td>Research papers and their stage/source labels</td><td>Live, each time a page loads</td><td>Shown with each list; labels are automatic</td></tr>
+          <tr><td>Incidence and mortality statistics</td><td>IARC GLOBOCAN 2024 estimates</td><td>${longDate(VERIFIED.stats)}</td></tr>
+          <tr><td>Disease summaries and their citations</td><td>Written October 2026</td><td>${longDate(VERIFIED.citations)}</td></tr>
+          <tr><td>Country research groups, registries, regulators and patient organizations</td><td>October 2026</td><td>${longDate(VERIFIED.countryLinks)}</td></tr>
+          <tr><td>Registry access notes</td><td>October 2026</td><td>${longDate(VERIFIED.registries)}</td></tr>
+        </tbody></table></div>
+        <h2 style="margin-top:34px">Evidence stage and source labels</h2>
+        <p>Each trial shows its phase and whether it is an interventional or observational study, and is marked as a registry record with its registry name. Each research paper is labelled by evidence stage (Phase 1–4 trial, clinical trial, systematic review, review, guideline, case report, observational study, lab study, or patient data) and by source type (journal article or preprint). The paper labels come from the article type and subject headings in Europe PMC and are assigned automatically, so they are a guide, not a judgement of quality.</p>
         <h2 style="margin-top:34px">Known limits</h2>
         <ul class="facts">
           <li>Trial records are written and updated by sponsors. A trial shown as recruiting may have paused or filled at a particular site, so always confirm with the study team.</li>
