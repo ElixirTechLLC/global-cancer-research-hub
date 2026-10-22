@@ -81,6 +81,7 @@
     if (bio.length) terms.push(`(${bio.map((b) => (/\s/.test(b) ? `"${b}"` : b)).join(' OR ')})`);
     if (q.elig) terms.push(`AREA[EligibilityCriteria]"${q.elig.replace(/"/g, '').trim()}"`);
     if (terms.length) p.set('query.term', terms.join(' AND '));
+    if (q.intr) p.set('query.intr', q.intr);
     if (q.country) {
       const name = `AREA[LocationCountry]"${q.country.replace(/"/g, '')}"`;
       // For "recruiting now", require a recruiting site in that country, not just a recruiting trial with a closed site there.
@@ -107,8 +108,8 @@
 
   // Literature: publications whose authors list an institution in the given country.
   const publications = async (term, c, size = 3) => {
-    const aff = (c.aff || [c.name]).map((a) => `AFF:"${a}"`).join(' OR ');
-    const query = `TITLE:"${term}" AND (${aff}) AND SRC:(MED OR PPR)`;
+    const aff = c ? ' AND (' + (c.aff || [c.name]).map((a) => `AFF:"${a}"`).join(' OR ') + ')' : '';
+    const query = `TITLE:"${term}"${aff} AND SRC:(MED OR PPR)`;
     const url = `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(query)}&format=json&resultType=core&pageSize=${size}&sort=${encodeURIComponent('P_PDATE_D desc')}`;
     const d = await getJSON(url);
     return {
@@ -391,6 +392,7 @@
           ${refs.length ? `<h3 style="margin-top:1.6em">References</h3><ol class="refs">${refs.map((r, i) => `<li id="ref-${i + 1}">${ext(r.url, r.label)}</li>`).join('')}</ol><p class="source-note">Each statement above links to the source that supports it; citations were last checked on ${longDate(VERIFIED.citations)}. The text has not yet been reviewed by a medical board.</p>` : (node.overview?.length ? reviewNotice : '')}
         </div>
         <aside class="stack">
+          ${isRoot ? `<div class="card" id="whats-new"><h3>What's new</h3><p class="loading">Loading the daily snapshot…</p></div>` : ''}
           ${node.group ? '' : `<div class="card"><h3>Open ${e(short)} trials</h3><p><span class="count loading" id="node-count">…</span><br><span class="source-note">recruiting worldwide right now</span></p><a class="btn btn-orange" href="${trialsHref({ cond: node.term })}">Find a trial</a></div>`}
           ${treatHtml}
           ${node.sources?.length ? `<div class="card"><h3>Further reading</h3>${node.sources.map(([t, u]) => `<p style="margin:.3em 0">${ext(u, t)}</p>`).join('')}</div>` : ''}
@@ -421,6 +423,12 @@
 
     if (node.group) return;
     const token = renderToken;
+    if (isRoot) snapshot('feed', root.slug).then((feed) => {
+      const card = token === renderToken && document.getElementById('whats-new');
+      if (!card) return;
+      const n = (t) => feed.events.filter((ev) => ev.type === t).length;
+      card.innerHTML = `<h3>What's new</h3><p class="source-note">Last 90 days, snapshot ${e(feed.date)}</p><ul class="facts" style="font-size:.95rem"><li>${fmt(n('new'))} new trials registered</li><li>${fmt(n('status'))} status changes</li><li>${fmt(n('results'))} trials posted results</li><li>${fmt(n('approval'))} FDA approvals</li></ul><p style="margin-top:12px"><a class="btn btn-outline btn-sm" href="#/updates/${root.slug}">Updates feed</a> <a class="btn btn-outline btn-sm" href="#/pipeline/${root.slug}">Drug pipeline</a></p>`;
+    }).catch(() => { const card = document.getElementById('whats-new'); if (card) card.innerHTML = '<h3>What\'s new</h3><p class="source-note">No daily snapshot available yet.</p>'; });
     countTrials({ cond: node.term }).then((n) => { const el = document.getElementById('node-count'); if (el && token === renderToken) { el.textContent = fmt(n); el.classList.remove('loading'); } }).catch(() => {});
     pool(COUNTRIES, 4, async (c) => {
       const n = await countTrials({ cond: node.term, country: c.name }).catch(() => null);
@@ -464,6 +472,7 @@
     main.innerHTML = pageHead('Find a clinical trial', 'Search open cancer trials worldwide, then check the age, sex and location requirements against your own situation.', [['Home', '#/'], ['Find a clinical trial']]) + `
       <section class="band"><div class="wrap">
         <div class="card">${finderForm(q)}</div>
+        ${q.intr ? `<div class="notice info" style="margin-top:14px">Showing trials whose interventions include <strong>${e(q.intr)}</strong>. Changing the filters above drops this drug filter. <a href="#/drug/${encodeURIComponent(q.intr)}">Drug page</a></div>` : ''}
         ${q.setting || q.bio || q.elig ? '<div class="notice" style="margin-top:14px">Disease setting, biomarker and eligibility-text filters are keyword searches of the registry record. They can miss trials that use different wording and include trials where the term appears as an exclusion. Always read the full eligibility criteria.</div>' : ''}
         <div class="results-bar"><h2 id="result-count" style="margin:0" class="loading" aria-live="polite">Searching…</h2><span class="source-note" id="ct-stamp">Sorted by most recently updated</span></div>
         <div class="stack" id="results"></div>
@@ -750,6 +759,7 @@
         <h2 style="margin-top:34px">How current is each part of the site</h2>
         <div class="table-scroll"><table class="data"><thead><tr><th>Content</th><th>Updated</th><th>Last verified</th></tr></thead><tbody>
           <tr><td>Trial listings, counts and trial pages</td><td>Live, each time a page loads</td><td>Shown on each item as "retrieved live" with the time; the registry's own "record last updated" date is shown as well</td></tr>
+          <tr><td>Updates feed and drug pipeline</td><td>Daily snapshot (scheduled job, 05:20 UTC)</td><td>Snapshot date shown on each page</td></tr>
           <tr><td>Research papers and their stage/source labels</td><td>Live, each time a page loads</td><td>Shown with each list; labels are automatic</td></tr>
           <tr><td>Incidence and mortality statistics</td><td>IARC GLOBOCAN 2024 estimates</td><td>${longDate(VERIFIED.stats)}</td></tr>
           <tr><td>Disease summaries and their citations</td><td>Written October 2026</td><td>${longDate(VERIFIED.citations)}</td></tr>
@@ -768,6 +778,140 @@
       </div></section>`;
   }
 
+  // ---------- daily snapshot: updates feed, pipeline, drug pages ----------
+  const snapshot = (kind, slug) => getJSON(`data/snapshot/${kind}/${slug}.json`);
+  const PHASE_LABEL = { PHASE4: 'Phase 4', PHASE3: 'Phase 3', PHASE2: 'Phase 2', PHASE1: 'Phase 1', EARLY_PHASE1: 'Early phase 1', NA: 'No phase (not a drug trial)' };
+  const phaseLabel = (p) => PHASE_LABEL[p] || (p ? titleCase(p) : 'Phase not stated');
+  const EVENT_LABEL = { new: 'New trial', status: 'Status change', results: 'Results posted', approval: 'FDA approval' };
+  const cancerChips = (base, active) => `<div class="chips">${ROOTS.map((r) => `<a class="chip${r.slug === active ? ' active' : ''}" href="#/${base}/${r.slug}">${e(r.name)}</a>`).join('')}</div>`;
+  const typeMatcher = (node) => {
+    const words = node.name.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').trim();
+    const re = new RegExp(`\\b(${words.replace(/\s+/g, '\\s+')}${node.abbr ? '|' + node.abbr.replace(/[^a-z0-9+]/gi, '') : ''})\\b`, 'i');
+    return (ev) => re.test(`${ev.title || ''} ${(ev.cond || []).join(' ')}`);
+  };
+
+  async function updatesPage(slug, q) {
+    const root = ROOTS.find((r) => r.slug === slug) || FOCUS || ROOTS[0];
+    main.innerHTML = pageHead(`What's new in ${root.name.toLowerCase()} research`, 'New trials, status changes, posted results and FDA approvals from the last 90 days, refreshed every day.', [['Home', '#/'], ['Updates']]) + `
+      <section class="band"><div class="wrap">
+        ${ROOTS.length > 1 ? cancerChips('updates', root.slug) : ''}
+        <div id="feed" style="margin-top:20px"><p class="loading">Loading the latest snapshot…</p></div>
+      </div></section>`;
+    const token = renderToken;
+    let feed;
+    try { feed = await snapshot('feed', root.slug); } catch { if (token === renderToken) document.getElementById('feed').innerHTML = '<div class="notice">No snapshot has been published for this cancer yet.</div>'; return; }
+    if (token !== renderToken) return;
+    const types = (root.children || []).filter((k) => !k.group);
+    const box = document.getElementById('feed');
+    const draw = (typeSlug) => {
+      const node = types.find((t) => t.slug === typeSlug);
+      const events = node ? feed.events.filter(typeMatcher(node)) : feed.events;
+      const groups = ['approval', 'new', 'status', 'results'].map((t) => [t, events.filter((ev) => ev.type === t)]);
+      box.innerHTML = `
+        <div class="stats" style="grid-template-columns:repeat(4,1fr)">${groups.map(([t, list]) => `<div class="stat"><b>${fmt(list.length)}</b><span>${e(EVENT_LABEL[t])}${t === 'approval' ? ' (US)' : ''}${t === 'new' ? ' registered' : ''}</span></div>`).join('')}</div>
+        <p class="source-note" style="margin-top:10px">Snapshot taken ${e(feed.date)}, covering ${e(feed.since)} to ${e(feed.date)}. ${feed.previous ? `Status changes are detected by comparing with the previous snapshot (${e(feed.previous)}).` : 'Status changes appear once a second daily snapshot exists to compare against.'} ${fmt(feed.open)} open ${e(root.name.toLowerCase())} trials were tracked. Sources: ClinicalTrials.gov; openFDA (Drugs@FDA and drug labels) for approvals.</p>
+        ${types.length ? `<div class="chips" style="margin-top:16px" id="type-chips"><button type="button" class="chip${!node ? ' active' : ''}" data-type="">All ${e(root.name.toLowerCase())}</button>${types.map((t) => `<button type="button" class="chip${t === node ? ' active' : ''}" data-type="${t.slug}">${e(t.abbr || t.name)}</button>`).join('')}</div>` : ''}
+        ${groups.map(([t, list]) => list.length ? `<h2 style="margin-top:30px">${e(EVENT_LABEL[t])}${t === 'approval' ? ' (United States)' : ''} <span class="source-note">(${fmt(list.length)})</span></h2><ul class="facts">${list.slice(0, 60).map((ev) => eventItem(ev)).join('')}${list.length > 60 ? `<li class="source-note">${fmt(list.length - 60)} more not shown.</li>` : ''}</ul>` : '').join('')}
+        ${!events.length ? '<p>No events in this window.</p>' : ''}`;
+      box.querySelector('#type-chips')?.addEventListener('click', (ev) => { const b = ev.target.closest('[data-type]'); if (b) draw(b.dataset.type); });
+    };
+    draw(q.type || '');
+  }
+  function eventItem(ev) {
+    const date = `<span class="tag">${e(ev.date)}</span>`;
+    if (ev.type === 'approval') return `<li>${date} <strong>${e(ev.drug)}</strong>${ev.generic ? ` (${e(ev.generic)})` : ''} · ${e(ev.kind)} · ${e(ev.sponsor || '')} · ${ext(ev.url, 'Drugs@FDA record')} · <a href="#/drug/${encodeURIComponent((ev.generic || ev.drug).split(',')[0].trim())}">drug page</a><br><span class="source-note">Matched to this cancer because the approved label's indications mention it; read the label for the exact indication.</span></li>`;
+    const extra = ev.type === 'status' ? ` · ${e(titleCase(ev.from))} → <strong>${e(titleCase(ev.to))}</strong>` : ev.type === 'new' && ev.status ? ` · ${e(titleCase(ev.status))}` : '';
+    return `<li>${date} <span class="tag navy">${e(phaseLabel(ev.phase))}</span> <a href="#/trial/${e(ev.id)}">${e(ev.title)}</a>${extra}<br><span class="source-note">${e((ev.cond || []).join(', '))}</span></li>`;
+  }
+
+  async function pipelinePage(slug) {
+    const root = ROOTS.find((r) => r.slug === slug) || FOCUS || ROOTS[0];
+    main.innerHTML = pageHead(`${root.name} drug pipeline`, 'Drugs and biologics in open trials, ranked by trial activity, with the most advanced phase reached. Refreshed daily from ClinicalTrials.gov.', [['Home', '#/'], ['Pipeline']]) + `
+      <section class="band"><div class="wrap">
+        ${ROOTS.length > 1 ? cancerChips('pipeline', root.slug) : ''}
+        <div id="pipe" style="margin-top:20px"><p class="loading">Loading the latest snapshot…</p></div>
+      </div></section>`;
+    const token = renderToken;
+    let data;
+    try { data = await snapshot('pipeline', root.slug); } catch { if (token === renderToken) document.getElementById('pipe').innerHTML = '<div class="notice">No snapshot has been published for this cancer yet.</div>'; return; }
+    if (token !== renderToken) return;
+    const box = document.getElementById('pipe');
+    const draw = (phase) => {
+      const rows = data.drugs.filter((d) => !phase || d.top === phase);
+      box.innerHTML = `
+        <div class="chips" id="phase-chips"><button type="button" class="chip${!phase ? ' active' : ''}" data-phase="">All phases</button>${['PHASE4', 'PHASE3', 'PHASE2', 'PHASE1', 'EARLY_PHASE1'].map((p) => `<button type="button" class="chip${phase === p ? ' active' : ''}" data-phase="${p}">Up to ${e(PHASE_LABEL[p].toLowerCase())}</button>`).join('')}</div>
+        <p class="source-note" style="margin:12px 0">Snapshot taken ${e(data.date)} from ${fmt(data.open)} open interventional ${e(root.name.toLowerCase())} trials. "Highest phase" is the most advanced phase among the open trials that list the drug; it does not say whether the drug is approved anywhere. Drug names are grouped automatically from registry entries, so the same drug can occasionally appear twice under different spellings, and placebo, procedures and generic "chemotherapy" entries are left out.</p>
+        <div class="table-scroll"><table class="data"><thead><tr><th>Drug</th><th>Highest phase in open trials</th><th class="num">Open trials</th><th>Trials by phase</th><th class="num">Sponsors</th><th></th></tr></thead><tbody>
+        ${rows.map((d) => `<tr><td><a href="#/drug/${encodeURIComponent(d.name)}?from=${root.slug}"><strong>${e(d.name)}</strong></a></td><td><span class="tag navy">${e(phaseLabel(d.top))}</span></td><td class="num">${fmt(d.trials)}</td><td class="source-note">${['PHASE4', 'PHASE3', 'PHASE2', 'PHASE1', 'EARLY_PHASE1', 'NA'].filter((p) => d.phases[p]).map((p) => `${e(PHASE_LABEL[p].replace(' (not a drug trial)', ''))}: ${d.phases[p]}`).join(' · ')}</td><td class="num">${fmt(d.sponsors)}</td><td><a href="${trialsHref({ cond: root.term, intr: d.name })}">Trials</a></td></tr>`).join('')}
+        </tbody></table></div>`;
+      box.querySelector('#phase-chips').addEventListener('click', (ev) => { const b = ev.target.closest('[data-phase]'); if (b) draw(b.dataset.phase); });
+    };
+    draw('');
+  }
+
+  async function drugPage(name, q) {
+    const from = ROOTS.find((r) => r.slug === q.from);
+    main.innerHTML = pageHead(name, 'Open trials, regulatory status and recent research for this drug.', [['Home', '#/'], ['Pipeline', `#/pipeline/${(from || FOCUS || ROOTS[0]).slug}`], [name]]) + `
+      <section class="band"><div class="wrap two-col">
+        <div>
+          <h2>Open trials studying ${e(name)}${from ? ` in ${e(from.name.toLowerCase())}` : ''}</h2>
+          <p class="source-note" id="drug-count" aria-live="polite">Searching…</p>
+          <div class="stack" id="drug-trials"></div>
+          <p style="margin-top:14px"><a class="btn btn-outline btn-sm" href="${trialsHref({ cond: from ? from.term : 'Cancer', intr: name })}">All trials of ${e(name)}${from ? ` in ${e(from.name.toLowerCase())}` : ''}</a></p>
+          <h2 style="margin-top:34px">Recent research papers</h2>
+          <div id="drug-pubs"><p class="loading">Loading…</p></div>
+        </div>
+        <aside class="stack">
+          <div class="card" id="fda"><h3>United States: FDA</h3><p class="loading">Checking openFDA…</p></div>
+          <div class="card"><h3>Other regulators</h3><p class="source-note">These open each regulator's own search; approval status outside the US is not pulled in automatically.</p>
+            <p style="margin:.3em 0">${ext(`https://www.ema.europa.eu/en/search?search_api_fulltext=${encodeURIComponent(name)}`, 'European Medicines Agency')}</p>
+            <p style="margin:.3em 0">${ext(`https://health-products.canada.ca/dpd-bdpp/index-eng.jsp`, 'Health Canada Drug Product Database')}</p>
+            <p style="margin:.3em 0">${ext(`https://www.pmda.go.jp/english/review-services/reviews/approved-information/drugs/0002.html`, 'Japan PMDA approved drugs')}</p>
+            <p style="margin:.3em 0">${ext(`https://www.tga.gov.au/resources/artg?search_api_views_fulltext=${encodeURIComponent(name)}`, 'Australia TGA register')}</p>
+            <p style="margin:.3em 0">${ext(`https://english.nmpa.gov.cn/`, 'China NMPA')}</p>
+          </div>
+          ${from ? `<div class="card" id="pipe-card"><h3>In the ${e(from.name.toLowerCase())} pipeline</h3><p class="loading">Loading…</p></div>` : ''}
+        </aside>
+      </div></section>`;
+    const token = renderToken;
+    const countEl = document.getElementById('drug-count'), list = document.getElementById('drug-trials');
+    searchTrials({ cond: from ? from.term : 'Cancer', intr: name }).then((d) => {
+      if (token !== renderToken) return;
+      countEl.textContent = `${fmt(d.totalCount)} recruiting trial${d.totalCount === 1 ? '' : 's'} list ${name} as an intervention. ${retrieved('ClinicalTrials.gov')}`;
+      list.innerHTML = (d.studies || []).map(trialCard).join('') || '<p>No recruiting trials found.</p>';
+    }).catch(() => { if (token === renderToken) countEl.textContent = 'Could not load trials.'; });
+    publications(name, null, 6).then((r) => { if (token === renderToken) document.getElementById('drug-pubs').innerHTML = pubList(r); })
+      .catch(() => { if (token === renderToken) document.getElementById('drug-pubs').innerHTML = '<p class="error">Could not load publications.</p>'; });
+    fdaStatus(name).then((html) => { if (token === renderToken) document.getElementById('fda').innerHTML = `<h3>United States: FDA</h3>${html}`; });
+    if (from) snapshot('pipeline', from.slug).then((data) => {
+      if (token !== renderToken) return;
+      const d = data.drugs.find((x) => x.name.toLowerCase() === name.toLowerCase());
+      document.getElementById('pipe-card').innerHTML = `<h3>In the ${e(from.name.toLowerCase())} pipeline</h3>${d ? `<p><span class="count">${fmt(d.trials)}</span><br><span class="source-note">open trials · highest phase ${e(phaseLabel(d.top))} · ${fmt(d.sponsors)} sponsors (snapshot ${e(data.date)})</span></p><p class="source-note">${d.ids.map((id) => `<a href="#/trial/${e(id)}">${e(id)}</a>`).join(' · ')}</p>` : '<p class="source-note">Not in the top 120 of this pipeline snapshot.</p>'}`;
+    }).catch(() => {});
+  }
+  // openFDA: approved label (indications) and Drugs@FDA application history for a drug name.
+  async function fdaStatus(name) {
+    const qn = name.replace(/"/g, '');
+    try {
+      const lab = await getJSON(`https://api.fda.gov/drug/label.json?search=${encodeURIComponent(`openfda.generic_name:"${qn}" OR openfda.brand_name:"${qn}"`)}&limit=1`).catch(() => null);
+      const label = lab?.results?.[0];
+      if (!label) return `<p><span class="tag">No approved label found</span></p><p class="source-note">openFDA has no prescribing label matching "${e(name)}", which usually means the drug is investigational or not approved in the US under this name. ${retrieved('openFDA')}</p>`;
+      const indic = (label.indications_and_usage || []).join(' ').replace(/^\s*1\s+INDICATIONS AND USAGE\s*/i, '').replace(/\(\s*\d+(\.\d+)?\s*\)/g, '').trim();
+      const apps = label.openfda?.application_number || [];
+      let first = '';
+      if (apps[0]) {
+        const d = await getJSON(`https://api.fda.gov/drug/drugsfda.json?search=${encodeURIComponent(`openfda.application_number:"${apps[0]}"`)}&limit=1`).catch(() => null);
+        const orig = (d?.results?.[0]?.submissions || []).filter((s) => s.submission_type === 'ORIG' && s.submission_status === 'AP').map((s) => s.submission_status_date).sort()[0];
+        if (orig) first = `${orig.slice(0, 4)}-${orig.slice(4, 6)}-${orig.slice(6, 8)}`;
+      }
+      const eff = label.effective_time ? `${label.effective_time.slice(0, 4)}-${label.effective_time.slice(4, 6)}-${label.effective_time.slice(6, 8)}` : '';
+      return `<p><span class="tag green">FDA-approved label</span></p>
+        <p><strong>${e((label.openfda?.brand_name || []).join(', '))}</strong>${label.openfda?.generic_name ? ` (${e(label.openfda.generic_name.join(', ').toLowerCase())})` : ''}<br><span class="source-note">${e((label.openfda?.manufacturer_name || []).join(', '))}${first ? ` · first approved ${e(first)}` : ''}${eff ? ` · label revised ${e(eff)}` : ''}</span></p>
+        <p class="source-note"><b>Indications (from the label)</b><br>${e(indic.slice(0, 700))}${indic.length > 700 ? '…' : ''}</p>
+        <p class="source-note">${apps[0] ? ext(`https://www.accessdata.fda.gov/scripts/cder/daf/index.cfm?event=overview.process&ApplNo=${apps[0].replace(/\D/g, '')}`, 'Drugs@FDA record') + ' · ' : ''}${label.openfda?.spl_set_id?.[0] ? ext(`https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=${label.openfda.spl_set_id[0]}`, 'Full label on DailyMed') + ' · ' : ''}${retrieved('openFDA')}</p>`;
+    } catch { return '<p class="source-note">openFDA could not be reached.</p>'; }
+  }
+
   function notFound() {
     main.innerHTML = pageHead('Page not found', 'That page does not exist.') + '<section class="band"><div class="wrap"><a class="btn btn-cta" href="#/">Back to home</a></div></section>';
   }
@@ -780,7 +924,7 @@
     const parts = pathPart.split('/').filter(Boolean).map(decodeURIComponent);
     const q = Object.fromEntries(new URLSearchParams(queryPart || ''));
     const [top, ...rest] = parts;
-    document.querySelectorAll('.nav a[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === (top === 'trial' ? 'trials' : top)));
+    document.querySelectorAll('.nav a[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === (top === 'trial' ? 'trials' : top === 'pipeline' || top === 'drug' ? 'updates' : top)));
     document.getElementById('nav').classList.remove('open');
     document.querySelector('.nav-toggle').setAttribute('aria-expanded', 'false');
     if (!top) home();
@@ -790,6 +934,9 @@
     else if (top === 'countries') (rest[0] ? countryPage(rest[0]) : countriesPage());
     else if (top === 'enroll') enrollPage();
     else if (top === 'about') aboutPage();
+    else if (top === 'updates') updatesPage(rest[0], q);
+    else if (top === 'pipeline') pipelinePage(rest[0]);
+    else if (top === 'drug' && rest[0]) drugPage(rest[0], q);
     else notFound();
     window.scrollTo(0, 0);
   }

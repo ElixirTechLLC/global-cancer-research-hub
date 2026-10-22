@@ -232,3 +232,5 @@ button.chip { font: inherit; font-size: .9rem; color: var(--navy); cursor: point
 #bio-checks label:has(input:checked) { border-color: var(--navy); background: #e8edf5; }
 .pubs .tags { margin: 5px 0 0; }
 [hidden] { display: none !important; }
+.brand-text { white-space: nowrap; }
+@media (min-width: 1101px) { .nav { gap: 16px; } .nav a:not(.btn) { font-size: .88rem; } }

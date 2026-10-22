@@ -1,0 +1,23 @@
+name: Daily data snapshot
+on:
+  schedule:
+    - cron: '20 5 * * *'   # 05:20 UTC every day
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: snapshot
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/snapshot.mjs
+      - name: Commit updated snapshot
+        run: |
+          git config user.name "snapshot-bot"
+          git config user.email "snapshot-bot@users.noreply.github.com"
+          git add data/snapshot
+          git diff --cached --quiet && echo "No changes" || (git commit -m "Daily data snapshot $(date -u +%F)" && git push)
