@@ -1,5 +1,6 @@
 (() => {
-  const CANCERS = window.CANCERS || [];
+  const CONFIG0 = window.SITE_CONFIG || {};
+  const CANCERS = (window.CANCERS || []).filter((c) => !CONFIG0.cancers || CONFIG0.cancers.includes(c.slug));
   const COUNTRIES = window.COUNTRIES || [];
   const REGISTRIES = window.REGISTRIES || [];
   const WORLD = window.WORLD_STATS || null;
@@ -325,10 +326,10 @@
         <div class="hero-panel"><h2>Find an open clinical trial</h2>${finderForm(profile.get(), true)}</div>
       </div></section>
 
-      <section class="band"><div class="wrap">
+      ${ROOTS.length > 1 ? `<section class="band"><div class="wrap">
         <div class="band-title"><h2>Explore by cancer</h2><span class="source-note">Case numbers: IARC GLOBOCAN ${WORLD ? e(WORLD.year) : ''} estimates</span></div>
         <div class="grid c4">${ROOTS.map(cancerCard).join('')}</div>
-      </div></section>
+      </div></section>` : ''}
 
       ${FOCUS ? `<section class="band alt"><div class="wrap">
         <div class="band-title"><h2>${e(FOCUS.name)} worldwide</h2><a href="#/cancers/${FOCUS.slug}">All ${e(FOCUS.name.toLowerCase())} types</a></div>
@@ -657,7 +658,7 @@
     main.innerHTML = pageHead(c.name, `Cancer research, trials and resources in ${c.name}.`, [['Home', '#/'], ['Research by country', '#/countries'], [c.name]]) + `
       <section class="band"><div class="wrap two-col">
         <div>
-          <h2>Cancer in ${e(c.name)}</h2>
+          <h2>${ROOTS.length === 1 ? e(ROOTS[0].name) : 'Cancer'} in ${e(c.name)}</h2>
           <div class="table-scroll"><table class="data"><thead><tr><th>Cancer</th><th class="num">New cases / year</th><th class="num">Deaths / year</th><th class="num">Recruiting trials</th><th></th></tr></thead><tbody>
           ${ROOTS.map((t) => `<tr><td><a href="#/cancers/${t.slug}">${e(t.name)}</a></td><td class="num">${fmt(STATS[t.slug]?.[c.code]?.cases)}</td><td class="num">${fmt(STATS[t.slug]?.[c.code]?.deaths)}</td><td class="num" data-type="${e(t.term)}"><span class="loading">…</span></td><td><a href="${trialsHref({ cond: t.term, country: c.name })}">View trials</a></td></tr>`).join('')}
           </tbody></table></div>
@@ -674,7 +675,7 @@
           <div class="stack">${(c.groups || []).map((g) => `<div class="card"><h3>${g.url ? ext(g.url, g.name) : e(g.name)}</h3>${g.city ? `<span class="tag">${e(g.city)}</span>` : ''}<p style="margin-top:8px">${e(g.note || '')}</p>${(g.src || []).length ? `<p class="source-note">Source: ${g.src.map(([t, u]) => ext(u, t)).join(' · ')}</p>` : ''}</div>`).join('') || '<p>No groups listed yet.</p>'}</div>
 
           <h2 style="margin-top:34px">Latest research from ${e(c.name)}</h2>
-          <div class="chips" id="pub-cancer">${ROOTS.map((t) => `<button type="button" class="chip${t === first ? ' active' : ''}" aria-pressed="${t === first}" data-term="${e(t.term)}">${e(t.name)}</button>`).join('')}</div>
+          <div class="chips" id="pub-cancer"${ROOTS.length === 1 ? ' hidden' : ''}>${ROOTS.map((t) => `<button type="button" class="chip${t === first ? ' active' : ''}" aria-pressed="${t === first}" data-term="${e(t.term)}">${e(t.name)}</button>`).join('')}</div>
           <div id="country-pubs" style="margin-top:14px"><p class="loading">Loading…</p></div>
         </div>
         <aside class="stack">
@@ -749,7 +750,7 @@
     const lit = window.LITERATURE_SOURCES || [];
     main.innerHTML = pageHead('About the data', 'Where the information on this site comes from, how current it is, and what its limits are.', [['Home', '#/'], ['About the data']]) + `
       <section class="band"><div class="wrap">
-        <div class="notice"><strong>Proof of concept.</strong> Leukemia is the first cancer with written, cited summaries; the other cancers currently show live data only. Disease summaries and research-group descriptions are draft text that has not yet been reviewed by a medical board or matched line by line to citations. Coverage of national registries is still being expanded.</div>
+        <div class="notice"><strong>Proof of concept.</strong> The site currently covers leukemia only; other cancers will be added. Disease summaries and research-group descriptions are draft text that has not yet been reviewed by a medical board or matched line by line to citations. Coverage of national registries is still being expanded.</div>
         <h2>Clinical trial registries</h2>
         <p class="lead">Trials are registered in many different registries worldwide. We show live results where a registry offers open data access, and link directly to the registry's own search where it does not.</p>
         <div class="table-scroll"><table class="data"><thead><tr><th>Registry</th><th>Covers</th><th>How we use it</th></tr></thead><tbody>

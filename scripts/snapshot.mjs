@@ -20,7 +20,8 @@ const GENERIC = ['placebo', 'standard of care', 'standard therapy', 'standard tr
 // Load the cancer tree from the browser data file.
 const window = {};
 new Function('window', readFileSync(join(ROOT, 'data', 'cancers.js'), 'utf8'))(window);
-const ROOTS = window.CANCERS.filter((c) => !c.soon);
+const enabled = window.SITE_CONFIG?.cancers;
+const ROOTS = window.CANCERS.filter((c) => !c.soon && (!enabled || enabled.includes(c.slug)));
 const only = process.argv[2];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

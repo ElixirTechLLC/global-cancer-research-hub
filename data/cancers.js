@@ -1,8 +1,9 @@
 // Editorial content tree: cancer -> type -> subtype (any depth).
 // `term` is the condition keyword sent to trial registries and literature indexes.
 // POC content: must be reviewed by a qualified hematologist/oncologist before public launch.
-// Home page focus. null = all cancers on the home page; 'leukemia' = the original leukemia-focused home page.
-window.SITE_CONFIG = { homeFocus: null };
+// homeFocus: null = all cancers on the home page; 'leukemia' = the leukemia-focused home page.
+// cancers: which cancers the site shows (and the daily snapshot covers). Remove the list, or set it to null, to show every cancer defined below.
+window.SITE_CONFIG = { homeFocus: 'leukemia', cancers: ['leukemia'] };
 
 window.CANCERS = [
   {
