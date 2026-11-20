@@ -339,7 +339,7 @@ window.CANCERS = [
 
 // Biomarkers and genetic features offered as search filters, per cancer. These are search keywords, not a classification.
 window.BIOMARKERS = {
-  leukemia: ['FLT3', 'NPM1', 'IDH1', 'IDH2', 'TP53', 'KMT2A', 'Philadelphia chromosome', 'BCR-ABL1', 'T315I', 'CEBPA', 'RUNX1', 'MRD', 'CD19', 'CD22', 'CD33', 'CD123', 'CD7', 'BRAF', 'IGHV', 'del(17p)', 'menin'],
+  leukemia: ['FLT3', 'NPM1', 'IDH1', 'IDH2', 'TP53', 'KMT2A', 'BCR-ABL1', 'T315I', 'CEBPA', 'RUNX1', 'MRD', 'CD19', 'CD22', 'CD33', 'CD123', 'CD7', 'BRAF', 'IGHV', 'menin'],
   lymphoma: ['CD20', 'CD30', 'CD19', 'BCL2', 'MYC', 'EZH2', 'BTK', 'TP53', 'EBV', 'PD-L1'],
   myeloma: ['BCMA', 'GPRC5D', 'FcRH5', 'CD38', 'del(17p)', 't(4;14)', 't(11;14)', 'high-risk cytogenetics', 'MRD'],
   breast: ['HER2', 'hormone receptor', 'estrogen receptor', 'triple negative', 'BRCA', 'PIK3CA', 'ESR1', 'PD-L1', 'HER2-low', 'Ki-67'],
@@ -347,4 +347,26 @@ window.BIOMARKERS = {
   colorectal: ['KRAS', 'BRAF V600E', 'MSI-H', 'dMMR', 'HER2', 'NRAS', 'NTRK', 'ctDNA'],
   prostate: ['BRCA', 'HRR mutation', 'PSMA', 'AR-V7', 'PTEN', 'MSI-H', 'PSA'],
   brain: ['IDH', 'MGMT', 'H3 K27M', 'BRAF', 'EGFR', '1p/19q', 'TERT', 'NTRK']
+};
+
+// Chromosome (cytogenetic) changes offered as search filters, per cancer. `q` is the registry search expression,
+// including common alternative spellings. These are changes to whole chromosomes or large pieces of them, not gene mutations.
+window.CHROMOSOME_CHANGES = {
+  leukemia: [
+    { label: 'Philadelphia chromosome t(9;22)', q: '"Philadelphia chromosome" OR "Philadelphia positive" OR "Ph-positive" OR "t(9;22)"' },
+    { label: 't(8;21)', q: '"t(8;21)" OR "RUNX1-RUNX1T1"' },
+    { label: 'inv(16)', q: '"inv(16)" OR "t(16;16)" OR "CBFB-MYH11"' },
+    { label: 't(15;17)', q: '"t(15;17)" OR "PML-RARA"' },
+    { label: '11q23 / KMT2A rearrangement', q: '"11q23" OR "KMT2A rearrangement" OR "KMT2A-rearranged" OR "KMT2A rearranged" OR "MLL rearrangement"' },
+    { label: 'Complex karyotype', q: '"complex karyotype" OR "complex cytogenetics"' },
+    { label: 'Monosomy 7', q: '"monosomy 7" OR "del(7q)"' },
+    { label: 'del(5q)', q: '"del(5q)" OR "5q deletion" OR "deletion 5q"' },
+    { label: 'Trisomy 8', q: '"trisomy 8"' },
+    { label: 'del(17p)', q: '"del(17p)" OR "17p deletion" OR "deletion 17p"' },
+    { label: 'del(11q)', q: '"del(11q)" OR "11q deletion" OR "deletion 11q"' },
+    { label: 'del(13q)', q: '"del(13q)" OR "13q deletion" OR "deletion 13q"' },
+    { label: 'Trisomy 12', q: '"trisomy 12"' },
+    { label: 'Hyperdiploidy', q: 'hyperdiploid OR hyperdiploidy' },
+    { label: 'Hypodiploidy', q: 'hypodiploid OR hypodiploidy' }
+  ]
 };

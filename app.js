@@ -79,7 +79,11 @@
     const setting = SETTINGS.find((x) => x[0] === q.setting && x[2]);
     if (setting) terms.push(setting[2]);
     const bio = (q.bio || '').split(',').map((x) => x.trim()).filter(Boolean);
-    if (bio.length) terms.push(`(${bio.map((b) => (/\s/.test(b) ? `"${b}"` : b)).join(' OR ')})`);
+    // Gene/protein markers and chromosome changes are combined: a trial matches if it mentions any ticked item.
+    const markers = bio.map((b) => (/[^A-Za-z0-9-]/.test(b) ? `"${b.replace(/"/g, '')}"` : b));
+    const chrAll = Object.values(window.CHROMOSOME_CHANGES || {}).flat();
+    for (const label of (q.chr || '').split(',').map((x) => x.trim()).filter(Boolean)) { const hit = chrAll.find((x) => x.label === label); if (hit) markers.push(`(${hit.q})`); }
+    if (markers.length) terms.push(`(${markers.join(' OR ')})`);
     if (q.elig) terms.push(`AREA[EligibilityCriteria]"${q.elig.replace(/"/g, '').trim()}"`);
     if (terms.length) p.set('query.term', terms.join(' AND '));
     if (q.intr) p.set('query.intr', q.intr);
@@ -186,7 +190,7 @@
   const crumbs = (items) => `<div class="crumbs">${items.map(([t, h]) => (h ? `<a href="${h}">${e(t)}</a>` : e(t))).join(' &nbsp;/&nbsp; ')}</div>`;
   const SITE = 'Global Cancer Research Hub';
   // When the site's static content was last checked against its sources.
-  const VERIFIED = { citations: '2026-10-04', countryLinks: '2026-10-04', stats: '2026-10-05', registries: '2026-10-04' };
+  const VERIFIED = { chromosomes: '2026-11-20', citations: '2026-10-04', countryLinks: '2026-10-04', stats: '2026-10-05', registries: '2026-10-04' };
   const longDate = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const stamp = () => new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   const retrieved = (src) => `Retrieved live from ${src} on ${stamp()}.`;
@@ -198,6 +202,7 @@
     ['mrd', 'MRD-positive / residual disease', '("measurable residual disease" OR "minimal residual disease" OR MRD)']
   ];
   const BIOMARKERS = window.BIOMARKERS || {};
+  const CHROMOSOMES = window.CHROMOSOME_CHANGES || {};
   const rootOfTerm = (term) => ROOTS.find((r) => r.term === term || flatten(r.children || []).some((t) => t.term === term));
   const pageHead = (title, sub, trail) => { document.title = `${title} | ${SITE}`; return headHtml(title, sub, trail); };
   const headHtml = (title, sub, trail) => `<div class="page-head"><div class="wrap">${trail ? crumbs(trail) : ''}<h1>${e(title)}</h1>${sub ? `<p>${e(sub)}</p>` : ''}</div></div>`;
@@ -257,7 +262,10 @@
       <label class="field wide">Keyword (drug, gene, sponsor…)<input name="term" placeholder="e.g. venetoclax, CAR-T, FLT3" value="${e(q.term || '')}"></label>
       <label class="field">Disease setting<select name="setting">${SETTINGS.map(([v, l]) => `<option value="${v}"${q.setting === v ? ' selected' : ''}>${e(l)}</option>`).join('')}</select></label>
       <label class="field">Eligibility text mentions<input name="elig" placeholder="e.g. venetoclax, transplant" value="${e(q.elig || '')}" title="Searches the trial's eligibility criteria for this word or phrase, whether it is required or excluded"></label>
-      <div class="field wide" id="bio-field">Biomarker or genetic feature (any of those ticked)<div class="checks" id="bio-checks">${bioChecks(q.cond || DEFAULT_COND, q.bio)}</div></div>
+      <div class="field wide" id="bio-field">Gene mutation or cell marker (any of those ticked)<div class="checks" id="bio-checks">${bioChecks(q.cond || DEFAULT_COND, q.bio)}</div></div>
+      <details id="adv" class="adv" style="grid-column:1/-1"${q.chr ? ' open' : ''}><summary>Advanced filters${q.chr ? ` <span class="tag navy">${q.chr.split(',').length} selected</span>` : ''}</summary><div class="inner">
+        <div class="field" id="chr-field">Chromosome change (any of those ticked)<div class="checks" id="chr-checks">${chrChecks(q.cond || DEFAULT_COND, q.chr)}</div><span class="source-note" style="font-weight:400">Changes to whole chromosomes or large pieces of them, found by chromosome testing. The number is how many recruiting trials for the selected cancer type mention each one.</span></div>
+      </div></details>
       <div class="field wide">Phase<div class="checks">${[['EARLY_PHASE1', 'Early 1'], ['PHASE1', '1'], ['PHASE2', '2'], ['PHASE3', '3'], ['PHASE4', '4']].map(([v, l]) => `<label><input type="checkbox" name="phase" value="${v}"${ph.includes(v) ? ' checked' : ''}> Phase ${l}</label>`).join('')}</div></div>`}
       <div><button class="btn btn-orange" type="submit">Search trials</button></div>
     </form>`;
@@ -269,18 +277,39 @@
     if (!list.length) return '<span class="source-note">Choose a cancer type to see its biomarkers.</span>';
     return list.map((b) => `<label><input type="checkbox" name="bio" value="${e(b)}"${on.includes(b) ? ' checked' : ''}> ${e(b)}</label>`).join('');
   }
+  function chrChecks(cond, selected) {
+    const root = rootOfTerm(cond);
+    const list = root ? CHROMOSOMES[root.slug] || [] : [];
+    const on = (selected || '').split(',');
+    if (!list.length) return '<span class="source-note">Choose a cancer type to see its chromosome changes.</span>';
+    return list.map((x) => `<label><input type="checkbox" name="chr" value="${e(x.label)}"${on.includes(x.label) ? ' checked' : ''}> ${e(x.label)} <span class="source-note" data-chr-count="${e(x.label)}"></span></label>`).join('');
+  }
+  // Live count of recruiting trials mentioning each chromosome change, for the selected cancer type.
+  function loadChrCounts(cond) {
+    const token = renderToken;
+    pool([...document.querySelectorAll('[data-chr-count]')], 3, async (el) => {
+      const n = await countTrials({ cond, chr: el.dataset.chrCount }).catch(() => null);
+      if (token === renderToken && el.isConnected) el.textContent = n == null ? '' : `(${fmt(n)})`;
+    });
+  }
   function bindFinder() {
     const form = document.getElementById('finder');
     if (!form) return;
     bindCountryPicker();
-    form.querySelector('select[name=cond]').addEventListener('change', (ev) => {
+    const condSel = form.querySelector('select[name=cond]');
+    condSel.addEventListener('change', (ev) => {
       const box = document.getElementById('bio-checks');
       if (box) box.innerHTML = bioChecks(ev.target.value, [...form.querySelectorAll('input[name=bio]:checked')].map((x) => x.value).join(','));
+      const chrBox = document.getElementById('chr-checks');
+      if (chrBox) { chrBox.innerHTML = chrChecks(ev.target.value, [...form.querySelectorAll('input[name=chr]:checked')].map((x) => x.value).join(',')); if (adv?.open) loadChrCounts(ev.target.value); }
     });
+    // Counts are only fetched once the advanced section is opened.
+    const adv = document.getElementById('adv');
+    if (adv) { adv.addEventListener('toggle', () => { if (adv.open) loadChrCounts(condSel.value); }); if (adv.open) loadChrCounts(condSel.value); }
     form.addEventListener('submit', (ev) => {
       ev.preventDefault();
       const fd = new FormData(form);
-      const q = { cond: fd.get('cond'), country: (fd.get('country') || '').trim(), age: fd.get('age'), sex: fd.get('sex'), status: fd.get('status'), term: (fd.get('term') || '').trim(), phases: fd.getAll('phase').join(','), setting: fd.get('setting') || '', bio: fd.getAll('bio').join(','), elig: (fd.get('elig') || '').trim() };
+      const q = { cond: fd.get('cond'), country: (fd.get('country') || '').trim(), age: fd.get('age'), sex: fd.get('sex'), status: fd.get('status'), term: (fd.get('term') || '').trim(), phases: fd.getAll('phase').join(','), setting: fd.get('setting') || '', bio: fd.getAll('bio').join(','), chr: fd.getAll('chr').join(','), elig: (fd.get('elig') || '').trim() };
       profile.set({ ...profile.get(), ...(q.age ? { age: q.age } : {}), ...(q.sex ? { sex: q.sex } : {}), ...(q.country ? { country: q.country } : {}) });
       location.hash = trialsHref(q);
     });
@@ -381,6 +410,7 @@
     const ref = (c) => { let i = refs.findIndex((r) => r.url === c.url); if (i < 0) i = refs.push(c) - 1; return `<sup><a href="#ref-${i + 1}" aria-label="Reference ${i + 1}">[${i + 1}]</a></sup>`; };
     const T = (x) => (typeof x === 'string' ? e(x) : e(x.text) + (x.cites || []).map(ref).join(''));
     let treatHtml = '';
+    const chromo = (window.CHROMOSOME_INFO || {})[path.map((n) => n.slug).join('/')];
     main.innerHTML = pageHead(node.abbr ? `${node.name} (${node.abbr})` : node.name, sub, trail) + `
       <section class="band"><div class="wrap two-col">
         <div>
@@ -388,9 +418,10 @@
           ${node.overview?.length || node.group ? '' : `<div class="notice info">A written summary of ${e(node.name.toLowerCase())} has not been published on this site yet. Everything on this page is live data: open trials, activity by country and recent research.</div>`}
           ${(node.overview || []).map((p) => `<p>${T(p)}</p>`).join('')}
           ${node.facts?.length ? `<h3 style="margin-top:1.4em">Key facts</h3><ul class="facts">${node.facts.map((f) => `<li>${T(f)}</li>`).join('')}</ul>` : ''}
+          ${chromo ? `<h3 style="margin-top:1.6em" id="chromosomes">Chromosome changes</h3>${(chromo.intro || []).map((p) => `<p>${T(p)}</p>`).join('')}${chromo.items?.length ? `<ul class="facts">${chromo.items.map((x) => `<li><strong>${e(x.name)}.</strong> ${T(x)}${x.filter ? ` <a class="source-note" href="${trialsHref({ cond: node.term, chr: x.filter })}">Find trials</a>` : ''}</li>`).join('')}</ul>` : ''}${isRoot ? '<p class="source-note">Each leukemia type page lists the chromosome changes that matter most for that type.</p>' : ''}` : ''}
           ${node.global ? `<div class="notice info" style="margin-top:22px"><strong>Around the world.</strong> ${T(node.global)}</div>` : ''}
           ${treatHtml = node.treatments?.length ? `<div class="card"><h3>Treatment approaches</h3><div class="tags">${node.treatments.map((t) => `<span class="tag navy">${e(t)}</span>`).join('')}</div>${(node.treatmentCites || []).length ? `<p class="source-note" style="margin-top:8px">Sources ${node.treatmentCites.map(ref).join(' ')}</p>` : ''}</div>` : '', ''}
-          ${refs.length ? `<h3 style="margin-top:1.6em">References</h3><ol class="refs">${refs.map((r, i) => `<li id="ref-${i + 1}">${ext(r.url, r.label)}</li>`).join('')}</ol><p class="source-note">Each statement above links to the source that supports it; citations were last checked on ${longDate(VERIFIED.citations)}. The text has not yet been reviewed by a medical board.</p>` : (node.overview?.length ? reviewNotice : '')}
+          ${refs.length ? `<h3 style="margin-top:1.6em">References</h3><ol class="refs">${refs.map((r, i) => `<li id="ref-${i + 1}">${ext(r.url, r.label)}</li>`).join('')}</ol><p class="source-note">Each statement above links to the source that supports it; citations were last checked on ${longDate(VERIFIED.citations)}${chromo ? `, and those for chromosome changes on ${longDate(VERIFIED.chromosomes)}` : ''}. The text has not yet been reviewed by a medical board.</p>` : (node.overview?.length ? reviewNotice : '')}
         </div>
         <aside class="stack">
           ${isRoot ? `<div class="card" id="whats-new"><h3>What's new</h3><p class="loading">Loading the daily snapshot…</p></div>` : ''}
@@ -474,7 +505,7 @@
       <section class="band"><div class="wrap">
         <div class="card">${finderForm(q)}</div>
         ${q.intr ? `<div class="notice info" style="margin-top:14px">Showing trials whose interventions include <strong>${e(q.intr)}</strong>. Changing the filters above drops this drug filter. <a href="#/drug/${encodeURIComponent(q.intr)}">Drug page</a></div>` : ''}
-        ${q.setting || q.bio || q.elig ? '<div class="notice" style="margin-top:14px">Disease setting, biomarker and eligibility-text filters are keyword searches of the registry record. They can miss trials that use different wording and include trials where the term appears as an exclusion. Always read the full eligibility criteria.</div>' : ''}
+        ${q.setting || q.bio || q.chr || q.elig ? '<div class="notice" style="margin-top:14px">Disease setting, marker, chromosome and eligibility-text filters are keyword searches of the registry record. They can miss trials that use different wording and include trials where the term appears as an exclusion. Always read the full eligibility criteria.</div>' : ''}
         <div class="results-bar"><h2 id="result-count" style="margin:0" class="loading" aria-live="polite">Searching…</h2><span class="source-note" id="ct-stamp">Sorted by most recently updated</span></div>
         <div class="stack" id="results"></div>
         <p style="text-align:center;margin-top:22px"><button class="btn btn-outline" id="more" hidden>Load more trials</button></p>
@@ -764,6 +795,7 @@
           <tr><td>Research papers and their stage/source labels</td><td>Live, each time a page loads</td><td>Shown with each list; labels are automatic</td></tr>
           <tr><td>Incidence and mortality statistics</td><td>IARC GLOBOCAN 2024 estimates</td><td>${longDate(VERIFIED.stats)}</td></tr>
           <tr><td>Disease summaries and their citations</td><td>Written October 2026</td><td>${longDate(VERIFIED.citations)}</td></tr>
+          <tr><td>Chromosome-change information and its citations</td><td>Written November 2026</td><td>${longDate(VERIFIED.chromosomes)}</td></tr>
           <tr><td>Country research groups, registries, regulators and patient organizations</td><td>October 2026</td><td>${longDate(VERIFIED.countryLinks)}</td></tr>
           <tr><td>Registry access notes</td><td>October 2026</td><td>${longDate(VERIFIED.registries)}</td></tr>
         </tbody></table></div>
